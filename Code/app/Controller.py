@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import cv2
 
-from Code.vision import ImgOrchestrator, OrchestratorCfg
+from Code.image import ImgOrchestrator, OrchestratorCfg
 from Code.Statistics.BayesAgent import BayesAgent
 from Code.audio import AudioPreproc, AudioFeat, Standardizer, KnnModel
 from Code.ui.UI import UI

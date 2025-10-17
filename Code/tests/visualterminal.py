@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 
 from Code.types import MaskU8, VecF, GrayImageF32
-from Code.vision import ImgOrchestrator, ImgFeat, ImgPreproc, KmeansModel,fit_from_paths, identify_path
+from Code.image import ImgOrchestrator, ImgFeat, ImgPreproc, KmeansModel,fit_from_paths, identify_path
 from Code.adapters import Repo
 
 from Code.tests.utilities import (

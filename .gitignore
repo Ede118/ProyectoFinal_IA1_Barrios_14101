@@ -1,0 +1,37 @@
+# Entornos virtuales
+.venv/
+venv/
+ENV/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.build/
+dist/
+build/
+
+# Herramientas
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# IDE/Editor
+.vscode/
+.idea/
+
+# SO
+.DS_Store
+Thumbs.db
+
+# Logs y temporales
+*.log
+*.tmp

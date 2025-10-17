@@ -9,9 +9,9 @@ import cv2
 import numpy as np
 
 from Code.types import ColorImageU8, MatF, VecF
-from Code.vision.ImgPreproc import ImgPreproc
-from Code.vision.ImgFeat import ImgFeat
-from Code.vision.KmeansModel import KMeans
+from Code.image.ImgPreproc import ImgPreproc
+from Code.image.ImgFeat import ImgFeat
+from Code.image.KmeansModel import KMeans
 
 if TYPE_CHECKING:
     from Code.adapters.Repositorio import Repo

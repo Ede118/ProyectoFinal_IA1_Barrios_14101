@@ -16,9 +16,9 @@ import numpy as np
 import pytest
 
 from Code.types import MaskU8, VecF, GrayImageF32, F32
-from Code.vision import ImgOrchestrator, ImgFeat, ImgPreproc,fit_from_paths, identify_path
-from Code.vision.ImgPreproc import ImgPreprocCfg
-from Code.vision.KmeansModel import KMeans
+from Code.image import ImgOrchestrator, ImgFeat, ImgPreproc,fit_from_paths, identify_path
+from Code.image.ImgPreproc import ImgPreprocCfg
+from Code.image.KmeansModel import KMeans
 from Code.adapters import Repo
 
 from Code.tests.utilities import (
