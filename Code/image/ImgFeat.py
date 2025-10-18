@@ -74,18 +74,9 @@ class ImgFeat(object):
             raise ValueError("img_norm y mask no pueden ser None")
 
         # Asegurar tipos esperados
-        img = img_norm.astype(np.float32, copy=False)
-        m = mask
-
-        # Binariza la máscara si es necesario
-        if m.dtype != np.uint8 or (m.max() not in (1, 255)):
-            # re-binariza por si viene en {0,1} o con grises
-            if mask_type == 'binary':
-                m = (m > 127).astype(np.uint8) * 255
-            else:  # 'zero_one'
-                m = (m > 0).astype(np.uint8) * 255
-        if m.dtype == np.uint8 and m.max() == 1:
-            m = (m > 0).astype(np.uint8) * 255
+        img = np.asarray(img_norm, dtype=np.float32, copy=False)
+        umbral = 127 if mask_type == 'binary' else 0
+        m = self._asegurar_mascara_uint8(mask, umbral=umbral)
 
 
         # --- calcular features atómicas ---
@@ -103,20 +94,11 @@ class ImgFeat(object):
         g = float(self.gradiente_interno(img, m, erosion_iters=1))
 
         if dim == '5D':
-            n = np.zeros(5, dtype=np.float32)
-            n[0] = h
-            n[1] = c
-            n[2] = v
-            n[3] = r
-            n[4] = g
-            return n
+            return np.array([h, c, v, r, g], dtype=np.float32)
 
         # dim == '3D'
-        n = np.zeros(3, dtype=np.float32)
-        n[0] = h
-        n[1] = c
-        n[2] = g if usar_gradiente_en_3D else r
-        return n
+        tercero = g if usar_gradiente_en_3D else r
+        return np.array([h, c, tercero], dtype=np.float32)
 
 
     # -------------------------------------------------------------------------------------------------  #
@@ -142,7 +124,7 @@ class ImgFeat(object):
         """
 
 
-        m = (mask > 0).astype('uint8') * 255
+        m = self._asegurar_mascara_uint8(mask)
 
         contours, hier = cv2.findContours(m, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
         if hier is None or len(contours) == 0:
@@ -174,11 +156,7 @@ class ImgFeat(object):
         ```
         """
         # 0) Asegurar binario uint8 {0,255}
-        if mask.dtype != np.uint8 or (mask.max() not in (1, 255)):
-            m = (mask > 0).astype(np.uint8) * 255
-        else:
-            # normalizar por si hay 1/0 en vez de 255/0
-            m = (mask > 0).astype(np.uint8) * 255
+        m = self._asegurar_mascara_uint8(mask)
 
         # 1) Contornos externos
         res = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -227,7 +205,7 @@ class ImgFeat(object):
 
         # 1) binario uint8 {0,255}
         # Transforma 128 x 128 de varios valores ->  128 x 128 de 0 - 255 (valores binarios)
-        m = (mask > 0).astype('uint8') * 255
+        m = self._asegurar_mascara_uint8(mask)
 
         # 2) contornos externos (ignora agujeros)
         cnts, _ = cv2.findContours(m.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -268,7 +246,7 @@ class ImgFeat(object):
         """
 
 
-        m = (mask > 0).astype(np.uint8) * 255
+        m = self._asegurar_mascara_uint8(mask)
         if cv2.countNonZero(m) == 0:
             return 0.0
 
@@ -320,7 +298,7 @@ class ImgFeat(object):
             img = img_norm
 
         # 1) interior puro: erosión leve para sacar el borde externo
-        m = (mask > 0).astype(np.uint8) * 255  # blindaje por si viene 0/1
+        m = self._asegurar_mascara_uint8(mask)
         if erosion_iters > 0:
             k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
             m_in = cv2.erode(m, k, iterations=erosion_iters)
@@ -375,3 +353,23 @@ class ImgFeat(object):
         usar_gradiente_en_3D: bool = True
         ) -> list[str]:
         return self.feature_names(dim=dim, usar_gradiente_en_3D=usar_gradiente_en_3D)
+
+    # -------------------------------------------------------------------------------------------------  #
+
+    def _asegurar_mascara_uint8(
+        self,
+        mask: MaskU8,
+        *,
+        umbral: int = 0
+        ) -> MaskU8:
+        m = np.asarray(mask)
+        if m.dtype != np.uint8:
+            m = (m > umbral).astype(np.uint8)
+        else:
+            if m.max(initial=0) not in (0, 1, 255):
+                m = (m > umbral).astype(np.uint8)
+        if m.max(initial=0) <= 1:
+            m = (m > 0).astype(np.uint8) * 255
+        else:
+            m = np.where(m > 0, 255, 0).astype(np.uint8)
+        return m

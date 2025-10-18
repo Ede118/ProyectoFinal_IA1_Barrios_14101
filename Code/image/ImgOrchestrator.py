@@ -435,8 +435,8 @@ class ImgOrchestrator:
         - Retorna `(vec_float64, img_norm, mask)` listos para predicción
         """
         img_bgr = self._cargar(entrada)
-        img_norm = self.pre.normalize(img_bgr)
-        mask = self.pre.segment(img_norm).astype(np.uint8, copy=False)
+        img_norm, mask = self.pre.process(img_bgr, float_mask=False)
+        mask = np.asarray(mask, dtype=np.uint8, copy=False)
         vec = self.feat.shape_vector(
             img_norm,
             mask,

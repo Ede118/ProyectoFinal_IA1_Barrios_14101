@@ -95,14 +95,16 @@ class ImgPreproc:
         if self.cfg.blur_ksize and self.cfg.blur_ksize > 1:
             k = self.cfg.blur_ksize | 1  # aseguramos impar
             img = cv2.GaussianBlur(img, (k, k), 0)
-        
+
         mask = self.segment(self._normalize_values(img, self.cfg.normalize_kind))
-        
+        mask = self._asegurar_mask_uint8(mask)
+
         if self.cfg.crop_to_bbox:
             img, mask = self._crop_to_mask(img, mask, margin=self.cfg.crop_margin)
 
         img = self._resize_pad(img, self.cfg.target_size, self.cfg.keep_aspect)
         mask = self._resize_pad(mask, self.cfg.target_size, self.cfg.keep_aspect, is_mask=True)
+        mask = self._asegurar_mask_uint8(mask)
 
         img = self._normalize_values(img, self.cfg.normalize_kind)
         img = img.astype(np.float32, copy=False)
@@ -112,11 +114,8 @@ class ImgPreproc:
             img = ((img - imin) / (imax - imin + 1e-6)).astype(np.float32, copy=False)
         else:
             img = np.clip(img, 0.0, 1.0).astype(np.float32, copy=False)
-        
-        if float_mask:
-            mask = (mask > 0).astype(np.float32)    # {0,1} float32
-        else:
-            mask = mask.astype(np.uint8, copy=False)
+
+        mask = mask.astype(np.uint8, copy=False)
 
         return img, mask
 
@@ -214,6 +213,7 @@ class ImgPreproc:
 
         # 4) Elegir componente conexa principal
         mask = self._largest_component(th)
+        mask = self._asegurar_mask_uint8(mask)
 
         # 5) Filtro por área mínima
         H, W = mask.shape
@@ -398,3 +398,18 @@ class ImgPreproc:
         x1 = min(img.shape[1], x + w + margin)
         y1 = min(img.shape[0], y + h + margin)
         return img[y0:y1, x0:x1], mask[y0:y1, x0:x1]
+
+    # ------------------------------------------------------------------------------------------------- #
+
+    def _asegurar_mask_uint8(self, mask: np.ndarray) -> MaskU8:
+        m = np.asarray(mask)
+        if m.dtype != np.uint8:
+            m = (m > 0).astype(np.uint8)
+        else:
+            if m.max(initial=0) not in (0, 1, 255):
+                m = (m > 0).astype(np.uint8)
+        if m.max(initial=0) <= 1:
+            m = (m > 0).astype(np.uint8) * 255
+        else:
+            m = np.where(m > 0, 255, 0).astype(np.uint8)
+        return m
