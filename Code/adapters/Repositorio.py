@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Literal, Optional
 
@@ -16,13 +16,17 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 AUDIO_EXTENSION = ".wav"
 
 
+def _default_project_root() -> Path:
+    # Code/adapters/Repositorio.py -> Code -> project root
+    return Path(__file__).resolve().parents[2]
+
 @dataclass(slots=True)
 class Repo:
     """
     Filesystem orchestrator for datasets, artifacts and experiment outputs.
     """
 
-    root: Path
+    root: Path = field(default_factory=_default_project_root)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root).expanduser().resolve()
@@ -80,7 +84,7 @@ class Repo:
         """
         Return sorted `.wav` files under `data/audio`, optionally filtered by command folder.
         """
-        base = self.root / "data" / "audio"
+        base = self.root / "DataBase" / "data" / "audio"
         if not base.exists():
             return []
 
@@ -133,7 +137,7 @@ class Repo:
             "test": files[ntr + nva :],
         }
         for split, paths in parts.items():
-            out = self.root / "data" / "splits" / f"{modality}_{split}.txt"
+            out = self.root / "DataBase" / "data" / "splits" / f"{modality}_{split}.txt"
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(
                 "\n".join(str(path.relative_to(self.root)) for path in paths),
@@ -154,7 +158,7 @@ class Repo:
         if split not in {"train", "val", "test"}:
             raise ValueError("split debe ser 'train', 'val' o 'test'")
 
-        path = self.root / "data" / "splits" / f"{modality}_{split}.txt"
+        path = self.root / "DataBase" / "data" / "splits" / f"{modality}_{split}.txt"
         if not path.is_file():
             raise FileNotFoundError(f"No existe el split: {path}")
 
@@ -173,7 +177,7 @@ class Repo:
             raise ValueError("modality debe ser 'vision' o 'audio'")
 
         files = self.list_images() if modality == "vision" else self.list_audio()
-        idx = self.root / "data" / "indexes" / f"{modality}_index.csv"
+        idx = self.root / "DataBase" / "data" / "indexes" / f"{modality}_index.csv"
         idx.parent.mkdir(parents=True, exist_ok=True)
         with idx.open("w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
@@ -276,7 +280,7 @@ class Repo:
         """Persist a run folder with metrics, posterior and predictions."""
         if not run_name:
             run_name = time.strftime("%Y-%m-%d_%H-%M-%S")
-        base = self.root / "runs" / run_name
+        base = self.root / "DataBase" / "runs" / run_name
         base.mkdir(parents=True, exist_ok=True)
         (base / "metrics.json").write_text(
             json.dumps(metrics, ensure_ascii=False, indent=2),
@@ -306,7 +310,7 @@ class Repo:
         allowed = {"vision", "audio"}
         if modality not in allowed:
             raise ValueError(f"modality debe estar en {allowed}")
-        return self.root / "models" / modality
+        return self.root / "DataBase" / "models" / modality
 
     @staticmethod
     def _sha1(path: Path, block: int = 1 << 16) -> str:
