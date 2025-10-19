@@ -1,375 +1,304 @@
-import numpy as np
+"""
+CHANGELOG (2025-01-07): ImgFeat/KMeansModel – Adaptación a PreprocOutput
+- Reescribe ImgFeat para usar la salida de ImgPreproc (img, mask, meta) y generar vectores 5D/7D estables.
+- Incorpora métricas hole_area_ratio, solidity e inertia_ratio, además de perimeter_ratio e inner_gradient en modo 7D.
+- Mantiene compatibilidad saneando la máscara, aceptando meta opcional y devolviendo nombres/debug alineados con el vector.
+- Ejemplo: pre_out = ImgPreproc().process(img); vec, names, dbg = ImgFeat("7D").extract(pre_out.img, pre_out.mask, pre_out.meta); KMeansModel().fit(vec[None, :], names)
+"""
+
+from __future__ import annotations
+
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+
 import cv2
-from typing import Literal
+import numpy as np
+
+if TYPE_CHECKING:
+    from Code.image.ImgPreproc import SegMeta  # pragma: no cover
 
 
-from Code.types import MaskU8, VecF, GrayImageF32
+class ImgFeat:
+    """Extractor de descriptores geométricos/fotométricos para objetos segmentados."""
 
-class ImgFeat(object):
-    """
-    ### Explicación
-    Extractor de características geométricas/fotométricas para objetos segmentados.
-    
-    Usa la imagen normalizada y la máscara asociada (producidas por `ImgPreproc`)
-    para construir vectores de features que alimentan modelos de clustering o clasificación.
-    
-    ### Métodos principales:
-    
-    - `shape_vector`: arma un descriptor compacto (3D o 5D) con huecos, circularidad,
-      vértices, rugosidad y gradiente.
-    - `contar_huecos`, `contar_vertices`, `circularidad`, `rugosidad`, `gradiente_interno`:
-      calculan métricas atómicas reutilizables en otros pipelines.
-    - `feature_names`: devuelve etiquetas legibles para cada componente del descriptor.
-    
-    Las entradas (`img_norm`, `mask`) deben estar alineadas y en escala 0..1 (imagen)
-    y {0,1}/{0,255} (máscara). Cada helper robustifica la máscara para tolerar ambos rangos.
-    """
+    _VALID_MODES = {"5D": 5, "7D": 7}
 
+    def __init__(self, mode: str = "5D", use_meta: bool = True) -> None:
+        self.mode = mode.upper()
+        if self.mode not in self._VALID_MODES:
+            raise ValueError(f"mode debe ser '5D' o '7D', no '{mode}'")
+        self.use_meta = bool(use_meta)
 
-    def shape_vector(self,
-            img_norm: GrayImageF32,
-            mask: MaskU8,
-            mask_type: Literal['binary', 'zero_one'] = 'binary',
-            dim: Literal['3D', '5D'] = '5D',
-            usar_gradiente_en_3D: bool = True) -> VecF:
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def feature_names(mode: str = "5D") -> List[str]:
+        """Devuelve los nombres de features en el orden exacto del vector."""
+
+        mode_norm = mode.upper()
+        if mode_norm == "5D":
+            return [
+                "n_holes",
+                "hole_area_ratio",
+                "circularity",
+                "solidity",
+                "inertia_ratio",
+            ]
+        if mode_norm == "7D":
+            return [
+                "n_holes",
+                "hole_area_ratio",
+                "circularity",
+                "solidity",
+                "inertia_ratio",
+                "perimeter_ratio",
+                "inner_gradient",
+            ]
+        raise ValueError(f"mode debe ser '5D' o '7D', no '{mode}'")
+
+    # ------------------------------------------------------------------ #
+    def extract(
+        self,
+        img_norm: np.ndarray,
+        mask: np.ndarray,
+        meta: Optional["SegMeta"] = None,
+    ) -> Tuple[np.ndarray, List[str], Dict[str, object]]:
         """
-        Dada una imágen con su máscara e imagen normalizada, se calcula
-        el vector de parámetros para clasificación con algorítmos K means.
+        Calcula el vector de features y metadatos de apoyo.
 
-        La dimensión de este vector define la dimensión del espacio de trabajo
-        del algoritmo K means
-
-        La cantidad de parámetros considerados son 5:
-        - cantidad de huecos            : `int`
-        - circularidad C                : `float`
-        - cantidad de vertices (aprox)  : `int`
-        - rugosidad R                   : `float`
-        - gradiente de intensidad G     : `float`
-
-        El orden es como fue descrito anteriormente.
-
-        Parámetros
+        Parameters
         ----------
-        `img_norm` : `np.ndarray (float32, 0..1)`
-            Imagen normalizada (gris) salida de ImgPreproc.normalize().
-        `mask` : `np.ndarray (uint8, {0,255} o {0,1})`
-            Máscara binaria salida de ImgPreproc.segment().
-        `dim` : {'3D','5D'}
-            '5D' -> [huecos, circularidad, vertices, rugosidad, gradiente]
-            '3D' -> [huecos, circularidad, X] con X = gradiente o rugosidad.
-        `usar_gradiente_en_3D` : bool
-            Si True, el tercer eje en 3D es gradiente; si False, rugosidad.
+        img_norm : np.ndarray
+            Imagen float32 ∈ [0,1] alineada y centrada (salida de ImgPreproc).
+        mask : np.ndarray
+            Máscara uint8 {0,255} (o convertible) alineada con `img_norm`.
+        meta : SegMeta | None
+            Información opcional proveniente de ImgPreproc (contorno, rect, etc.).
 
-        Retorna
+        Returns
         -------
-        `np.ndarray (float32)`
-            Vector de dimensión 3 o 5 según `dim`.
+        vec : np.ndarray
+            Vector float32 de dimensión 5 o 7 dependiendo del modo.
+        names : list[str]
+            Nombres de cada componente del vector, en el mismo orden.
+        debug : dict
+            Medidas intermedias útiles para depuración.
         """
 
-        # --- validaciones mínimas ---
-        if dim not in {'3D', '5D'}:
-            raise ValueError(f"dim debe ser '3D' o '5D', no '{dim}'")
+        names = self.feature_names(self.mode)
+        n_dim = len(names)
+        mask_u8 = self._ensure_mask_uint8(mask)
+        debug: Dict[str, object] = {}
 
-        if img_norm is None or mask is None:
-            raise ValueError("img_norm y mask no pueden ser None")
+        if mask_u8 is None or cv2.countNonZero(mask_u8) == 0:
+            debug["empty_mask"] = True
+            return np.zeros(n_dim, dtype=np.float32), names, debug
 
-        # Asegurar tipos esperados
-        img = np.asarray(img_norm, dtype=np.float32, copy=False)
-        umbral = 127 if mask_type == 'binary' else 0
-        m = self._asegurar_mascara_uint8(mask, umbral=umbral)
+        img_f32 = np.asarray(img_norm, dtype=np.float32, copy=False)
 
+        contour = None
+        rect = None
+        inertia_ratio = None
+        holes_meta = None
 
-        # --- calcular features atómicas ---
-        # Asumimos que estas funciones existen en este módulo/clase:
-        # contar_huecos(mask) -> int
-        # circularidad(mask) -> float
-        # contar_vertices(mask, eps_ratio=0.02, usar_hull=True) -> int
-        # rugosidad(mask) -> float
-        # gradiente_interno(img_norm, mask, erosion_iters=1) -> float
+        if self.use_meta and meta is not None:
+            contour = getattr(meta, "contour", None)
+            if contour is not None and len(contour) >= 3:
+                contour = np.asarray(contour, dtype=np.float32)
+            else:
+                contour = None
+            rect = getattr(meta, "rect", None)
+            inertia_ratio_meta = getattr(meta, "inertia_ratio", None)
+            if inertia_ratio_meta is not None:
+                inertia_ratio = float(inertia_ratio_meta)
+            holes_meta = getattr(meta, "holes", None)
 
-        h = float(self.contar_huecos(m))
-        c = float(self.circularidad(m))
-        v = float(self.contar_vertices(m, eps_ratio=0.02, usar_hull=True))
-        r = float(self.rugosidad(m))
-        g = float(self.gradiente_interno(img, m, erosion_iters=1))
+        contour_from_mask = False
+        hole_indices: List[int] = []
 
-        if dim == '5D':
-            return np.array([h, c, v, r, g], dtype=np.float32)
-
-        # dim == '3D'
-        tercero = g if usar_gradiente_en_3D else r
-        return np.array([h, c, tercero], dtype=np.float32)
-
-
-    # -------------------------------------------------------------------------------------------------  #
-    #                               --------- Funciones públicas  ---------                              #
-    # -------------------------------------------------------------------------------------------------  #
-
-    def contar_huecos(
-        self, 
-        mask: MaskU8
-        ) -> int:
-        """
-        ### Conteo de huecos
-        Calcula cuántos agujeros internos tiene el objeto segmentado.
-        - Convierte la máscara a binaria {0,255}
-        - Usa `cv2.findContours` con `RETR_CCOMP` para identificar hijos
-        - Cuenta cuántos contornos tienen parent distinto de -1
-        ### Resumen
-
-        ```
-        feats = ImgFeat()
-        n_holes = feats.contar_huecos(mask)
-        ```
-        """
-
-
-        m = self._asegurar_mascara_uint8(mask)
-
-        contours, hier = cv2.findContours(m, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-        if hier is None or len(contours) == 0:
-            return 0
-
-        # Con CCOMP, un 'parent != -1' indica agujero (hijo de un contorno externo)
-        holes = int(np.sum(hier[0, :, 3] != -1))
-        return holes
-
-    # -------------------------------------------------------------------------------------------------  #
-
-    def contar_vertices(
-        self, 
-        mask: MaskU8,
-        eps_ratio: float = 0.02,
-        usar_hull: bool = True
-        ) -> int:
-        """
-        ### Conteo de vértices
-        Aproxima el contorno del objeto y devuelve su número de vértices.
-        - Normaliza la máscara a {0,255}
-        - Obtiene el contorno externo principal
-        - Opcionalmente usa casco convexo y `approxPolyDP` con tolerancia relativa
-        ### Resumen
-
-        ```
-        feats = ImgFeat()
-        n_vertices = feats.contar_vertices(mask, eps_ratio=0.02, usar_hull=True)
-        ```
-        """
-        # 0) Asegurar binario uint8 {0,255}
-        m = self._asegurar_mascara_uint8(mask)
-
-        # 1) Contornos externos
-        res = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contornos = res[0] if len(res) == 2 else res[1]
-        if not contornos:
-            return 0
-
-        # 2) Contorno principal
-        c = max(contornos, key=cv2.contourArea)
-        if c is None or len(c) < 3:
-            return 0
-
-        # 3) Opcional: casco convexo
-        if usar_hull:
-            c = cv2.convexHull(c)
-
-        # 4) Aproximación poligonal (tolerancia relativa al perímetro)
-        per = cv2.arcLength(c, True)
-        if per <= 0:
-            return 0
-        eps = max(1e-6, eps_ratio) * per
-        aprox = cv2.approxPolyDP(c, eps, True)  # (L,1,2)
-
-        return int(len(aprox))
-
-    # -------------------------------------------------------------------------------------------------  #
-
-
-    def circularidad(
-        self, 
-        mask: MaskU8
-        ) -> float:
-        """
-        ### Circularidad
-        Mide qué tan circular es el objeto principal (1.0 ≈ círculo perfecto).
-        - Normaliza máscara y toma contorno externo mayor
-        - Calcula área y perímetro en subpíxel
-        - Retorna 4πA / P² (invariante a escala)
-        ### Resumen
-
-        ```
-        feats = ImgFeat()
-        circ = feats.circularidad(mask)
-        ```
-        """
-
-        # 1) binario uint8 {0,255}
-        # Transforma 128 x 128 de varios valores ->  128 x 128 de 0 - 255 (valores binarios)
-        m = self._asegurar_mascara_uint8(mask)
-
-        # 2) contornos externos (ignora agujeros)
-        cnts, _ = cv2.findContours(m.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not cnts:
-            return 0.0  # no hay objeto
-
-        # 3) tomar el contorno más grande por área
-        c = max(cnts, key=cv2.contourArea)
-
-        # 4) medidas geométricas suaves (subpíxel)
-        A = float(cv2.contourArea(c))                 # área del contorno externo
-        P = float(cv2.arcLength(c, closed=True))      # perímetro
-        if P <= 1e-9 or A <= 1e-9:
-            return 0.0
-
-        C = 4.0 * np.pi * A / (P * P)                 # invariante a escala
-        return float(C)
-
-    # -------------------------------------------------------------------------------------------------  #
-
-    def rugosidad(
-        self, 
-        mask: MaskU8
-        ) -> float:
-        
-        """
-        ### Rugosidad
-        Compara el perímetro real con el del casco convexo para cuantificar irregularidades.
-        - Extrae contorno externo
-        - Calcula perímetro original y del casco convexo
-        - Retorna R = P / P_convexo - 1 (>= 0)
-        ### Resumen
-
-        ```
-        feats = ImgFeat()
-        rough = feats.rugosidad(mask)
-        ```
-        """
-
-
-        m = self._asegurar_mascara_uint8(mask)
-        if cv2.countNonZero(m) == 0:
-            return 0.0
-
-        # 1) Contorno externo (1-pixel)
-        cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        if not cnts:
-            return 0.0
-        
-        c = max(cnts, key=cv2.contourArea)
-
-        # 2) Perímetros
-        P = float(cv2.arcLength(c, True))
-        hull = cv2.convexHull(c)
-        P_h = float(cv2.arcLength(hull, True))
-        if P_h <= 1e-9:
-            return 0.0
-
-        # 3) Rugosidad (adimensional, invariante a escala)
-        R = P / P_h - 1.0
-        return float(max(0.0, R))
-
-    # -------------------------------------------------------------------------------------------------  #
-
-    def gradiente_interno(
-        self, 
-        img_norm: GrayImageF32,
-        mask: MaskU8,
-        erosion_iters: int = 1
-        ) -> float:
-        """
-        ### Gradiente interno
-        Estima la energía de gradiente dentro del objeto evitando el borde.
-        - Convierte la máscara y la erosiona `erosion_iters` veces
-        - Calcula gradiente Sobel sobre la imagen normalizada
-        - Devuelve la mediana de magnitudes dentro del interior erosionado
-        ### Resumen
-
-        ```
-        feats = ImgFeat()
-        grad = feats.gradiente_interno(img_norm, mask, erosion_iters=1)
-        ```
-        """
-        # 0) sanity checks mínimos
-        if img_norm is None or mask is None:
-            return 0.0
-        if img_norm.dtype != np.float32:
-            img = img_norm.astype(np.float32)
+        if contour is None:
+            contour, hierarchy, hole_indices = self._main_contour_and_hierarchy(mask_u8)
+            contour_from_mask = True
+            if contour is None or len(contour) < 3:
+                debug["empty_contour"] = True
+                return np.zeros(n_dim, dtype=np.float32), names, debug
         else:
-            img = img_norm
+            hierarchy = None  # reutilizaremos la máscara para métricas de huecos
 
-        # 1) interior puro: erosión leve para sacar el borde externo
-        m = self._asegurar_mascara_uint8(mask)
-        if erosion_iters > 0:
-            k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-            m_in = cv2.erode(m, k, iterations=erosion_iters)
+        area, perimeter = self._contour_area_and_perimeter(contour)
+        mask_area = float(cv2.countNonZero(mask_u8))
+        hull, hull_perimeter = self._convex_hull_and_perimeter(contour)
+        hull_area = float(cv2.contourArea(hull)) if hull is not None else 0.0
+
+        if rect is None:
+            rect = cv2.minAreaRect(contour)
+
+        centroid = tuple(rect[0]) if rect else (0.0, 0.0)
+
+        if self.use_meta and meta is not None and hasattr(meta, "centroid"):
+            centroid = getattr(meta, "centroid")
+
+        if inertia_ratio is None:
+            inertia_ratio = self._inertia_ratio_from_moments(contour)
+
+        if holes_meta is not None:
+            n_holes = int(holes_meta)
+        elif hierarchy is not None:
+            n_holes = len(hole_indices)
         else:
-            m_in = m
+            # meta sin jerarquía: aproximar desde máscara rellenando huecos
+            contour_tmp, hierarchy_tmp, hole_indices = self._main_contour_and_hierarchy(mask_u8)
+            n_holes = len(hole_indices)
+            if contour is None and contour_tmp is not None:
+                contour = contour_tmp
+                area, perimeter = self._contour_area_and_perimeter(contour)
+                hull, hull_perimeter = self._convex_hull_and_perimeter(contour)
+                hull_area = float(cv2.contourArea(hull)) if hull is not None else 0.0
+                rect = cv2.minAreaRect(contour)
 
-        area = cv2.countNonZero(m_in)
-        if area == 0:
-            return 0.0  # objeto demasiado fino o máscara mala
+        hole_area = max(area - mask_area, 0.0)
+        hole_area_ratio = hole_area / (area + 1e-9)
 
-        # 2) gradiente Sobel en 0..1
-        gx = cv2.Sobel(img, cv2.CV_32F, 1, 0, ksize=3)
-        gy = cv2.Sobel(img, cv2.CV_32F, 0, 1, ksize=3)
-        mag = cv2.magnitude(gx, gy)  # sqrt(gx^2 + gy^2)
+        circularity = (4.0 * np.pi * area) / (perimeter * perimeter + 1e-9)
+        solidity = area / (hull_area + 1e-9) if hull_area > 0 else 0.0
+        perimeter_ratio = (perimeter / (hull_perimeter + 1e-9)) - 1.0
 
-        # 3) estadístico robusto en el interior erosionado
-        vals = mag[m_in > 0]
-        if vals.size == 0:
-            return 0.0
-        G = float(np.median(vals))
-        return G
-    
-    # -------------------------------------------------------------------------------------------------  #
+        inner_gradient = self._inner_gradient(img_f32, mask_u8)
 
-    def feature_names(
-        self,
-        dim: str = "5D",
-        usar_gradiente_en_3D: bool = True
-        ) -> list[str]:
-        """
-        ### Nombres de features
-        Genera la lista de etiquetas para cada componente del vector de características.
-        - Siempre incluye huecos y circularidad
-        - Añade vértices, rugosidad y gradiente según la dimensión solicitada
-        ### Resumen
+        debug.update(
+            area=area,
+            perimeter=perimeter,
+            mask_area=mask_area,
+            hole_area=hole_area,
+            rect=rect,
+            centroid=centroid,
+            hull_area=hull_area,
+            hull_perimeter=hull_perimeter,
+            n_holes=int(n_holes),
+            hole_area_ratio=hole_area_ratio,
+            circularity=circularity,
+            solidity=solidity,
+            inertia_ratio=inertia_ratio,
+            perimeter_ratio=perimeter_ratio,
+            inner_gradient=inner_gradient,
+            contour_source="mask" if contour_from_mask else "meta",
+        )
 
-        ```
-        feats = ImgFeat()
-        labels = feats.feature_names(dim="3D", usar_gradiente_en_3D=True)
-        ```
-        """
+        vec_values = [
+            float(n_holes),
+            float(hole_area_ratio),
+            float(circularity),
+            float(solidity),
+            float(inertia_ratio),
+        ]
+        if self.mode == "7D":
+            vec_values.extend([float(perimeter_ratio), float(inner_gradient)])
 
-        base = ["huecos", "circularidad"]
-        if dim == "5D":
-            return base + ["vertices", "rugosidad", "gradiente"]
-        # 3D
-        return base + (["gradiente"] if usar_gradiente_en_3D else ["rugosidad"])
+        vec = np.asarray(vec_values, dtype=np.float32)
+        return vec, names, debug
 
-    def nombres_de_caracteristicas(
-        self,
-        dim: str = "5D",
-        usar_gradiente_en_3D: bool = True
-        ) -> list[str]:
-        return self.feature_names(dim=dim, usar_gradiente_en_3D=usar_gradiente_en_3D)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _ensure_mask_uint8(mask: np.ndarray) -> np.ndarray:
+        """Convierte la máscara a uint8 {0,255}."""
 
-    # -------------------------------------------------------------------------------------------------  #
-
-    def _asegurar_mascara_uint8(
-        self,
-        mask: MaskU8,
-        *,
-        umbral: int = 0
-        ) -> MaskU8:
+        if mask is None:
+            return None
         m = np.asarray(mask)
         if m.dtype != np.uint8:
-            m = (m > umbral).astype(np.uint8)
-        else:
-            if m.max(initial=0) not in (0, 1, 255):
-                m = (m > umbral).astype(np.uint8)
+            m = (m > 0).astype(np.uint8)
         if m.max(initial=0) <= 1:
-            m = (m > 0).astype(np.uint8) * 255
+            m = m * 255
         else:
             m = np.where(m > 0, 255, 0).astype(np.uint8)
         return m
+
+    @staticmethod
+    def _main_contour_and_hierarchy(
+        mask: np.ndarray,
+    ) -> Tuple[Optional[np.ndarray], np.ndarray, List[int]]:
+        """
+        Obtiene el contorno externo de mayor área y la jerarquía CCOMP.
+
+        Returns
+        -------
+        contour : np.ndarray | None
+            Contorno principal.
+        hierarchy : np.ndarray
+            Jerarquía completa (shape (N,4)).
+        hole_indices : list[int]
+            Índices de los hijos directos del contorno principal.
+        """
+
+        cnts, hier = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            return None, np.zeros((0, 4), dtype=np.int32), []
+
+        areas = [cv2.contourArea(c) for c in cnts]
+        idx = int(np.argmax(areas))
+        contour = cnts[idx]
+
+        if hier is None or len(hier) == 0:
+            return contour, np.zeros((len(cnts), 4), dtype=np.int32), []
+
+        hier = hier[0]
+        hole_indices: List[int] = []
+        child = hier[idx][2]
+        while child != -1:
+            hole_indices.append(child)
+            child = hier[child][0]
+        return contour, hier, hole_indices
+
+    @staticmethod
+    def _contour_area_and_perimeter(contour: np.ndarray) -> Tuple[float, float]:
+        """Calcula área y perímetro (arcLength) para un contorno."""
+
+        area = float(cv2.contourArea(contour))
+        perimeter = float(cv2.arcLength(contour, True))
+        return area, perimeter
+
+    @staticmethod
+    def _convex_hull_and_perimeter(contour: np.ndarray) -> Tuple[Optional[np.ndarray], float]:
+        """Obtiene el casco convexo y su perímetro."""
+
+        hull = cv2.convexHull(contour) if contour is not None else None
+        if hull is None or len(hull) == 0:
+            return None, 0.0
+        hull_perimeter = float(cv2.arcLength(hull, True))
+        return hull, hull_perimeter
+
+    @staticmethod
+    def _inertia_ratio_from_moments(contour: np.ndarray) -> float:
+        """Deriva λmin/λmax a partir de los momentos centrales."""
+
+        M = cv2.moments(contour)
+        m00 = M["m00"] + 1e-9
+        cov_xx = M["mu20"] / m00
+        cov_yy = M["mu02"] / m00
+        cov_xy = M["mu11"] / m00
+        cov = np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]], dtype=np.float64)
+        eigvals, _ = np.linalg.eig(cov + 1e-9 * np.eye(2, dtype=np.float64))
+        eigvals = np.sort(eigvals)
+        return float(eigvals[0] / (eigvals[1] + 1e-9))
+
+    @staticmethod
+    def _inner_gradient(img_norm: np.ndarray, mask: np.ndarray) -> float:
+        """Calcula la mediana del gradiente (Sobel) dentro de la máscara erosionada."""
+
+        if img_norm.ndim == 3:
+            img_gray = cv2.cvtColor(img_norm, cv2.COLOR_BGR2GRAY)
+        else:
+            img_gray = img_norm
+
+        img_gray = np.asarray(img_gray, dtype=np.float32, copy=False)
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        eroded = cv2.erode(mask, kernel, iterations=1)
+        if cv2.countNonZero(eroded) == 0:
+            eroded = mask
+
+        gx = cv2.Sobel(img_gray, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(img_gray, cv2.CV_32F, 0, 1, ksize=3)
+        mag = cv2.magnitude(gx, gy)
+
+        values = mag[eroded > 0]
+        if values.size == 0:
+            return 0.0
+        return float(np.median(values))
