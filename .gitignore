@@ -36,3 +36,4 @@ Thumbs.db
 *.log
 *.tmp
 DataBase/tmp
+DataBase/data/discarded

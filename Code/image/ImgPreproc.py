@@ -41,17 +41,19 @@ class ImgPreprocCfg:
     removiendo cualquier preocupación de visualización.
     """
 
-    target_size: Tuple[int, int] = (256, 256)
+    target_size: Tuple[int, int] = (512, 512)
     keep_aspect: bool = True
     illum_sigma: float = 35.0
     use_adaptive: bool = False
     open_ksize: int = 3
     close_ksize: int = 3
-    min_area_ratio: float = 0.0005
+    min_area_ratio: float = 0.00085
     penalize_border: bool = True
     pad_ratio: float = 0.12
     rotate_crop_mode: Literal["auto", "square", "rect", "none"] = "auto"
     return_meta: bool = True
+    crop_illum_ratio: float = 0.20
+    use_seed_from_stage1: bool = True
 
 
 @dataclass(slots=True)
@@ -71,57 +73,57 @@ class ImgPreproc:
     # API pública
     # ------------------------------------------------------------------ #
     def process(self, img_bgr: ColorImageU8) -> PreprocOutput:
-        """
-        Ejecuta el pipeline completo sobre una imagen BGR/Gray.
-
-        Devuelve `PreprocOutput` con:
-        - `img`   : float32 en [0, 1], tamaño `cfg.target_size`.
-        - `mask`  : uint8 {0,255}, alineada con `img`.
-        - `meta`  : detalles geométricos del objeto detectado (o `None`).
-        """
-
+        # 1) Gris inicial
         if img_bgr.ndim == 3:
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         else:
             gray = np.asarray(img_bgr, dtype=np.uint8)
 
+        # 2) Segmentación gruesa con corrección de iluminación global
         gray_norm = self._normalize_illum(gray)
-        mask = self._bin_mask(gray_norm)
+        mask0 = self._bin_mask(gray_norm, self.cfg.open_ksize, self.cfg.close_ksize)
 
-        min_area = max(1, int(self.cfg.min_area_ratio * mask.size))
-        if cv2.countNonZero(mask) < min_area and not self.cfg.use_adaptive:
-            # Fallback: probar con threshold adaptativo forzado.
-            mask = self._bin_mask(gray_norm, force_adaptive=True)
+        min_area = max(1, int(self.cfg.min_area_ratio * mask0.size))
+        if cv2.countNonZero(mask0) < min_area and not self.cfg.use_adaptive:
+            mask0 = self._bin_mask(
+                gray_norm,
+                self.cfg.open_ksize,
+                self.cfg.close_ksize,
+                force_adaptive=True
+            )
 
-        cnts, hier = self._contours_with_holes(mask)
+        cnts, hier = self._contours_with_holes(mask0)
         best_score = -1.0
         best_feat: Optional[dict] = None
         best_contour: Optional[np.ndarray] = None
 
         for idx, contour in enumerate(cnts):
             hrow = hier[idx] if idx < len(hier) else None
-            feat = self._features(mask.shape, contour, hrow)
+            feat = self._features(mask0.shape, contour, hrow)
             if feat is None or feat["area"] < min_area:
                 continue
-            score = self._score(feat, mask.shape)
+            score = self._score(feat, mask0.shape)
             if score > best_score:
                 best_score = score
                 best_feat = feat
                 best_contour = contour
 
+        # Si no hay nada confiable, devolvemos algo bien formado
         if best_feat is None or best_contour is None:
             resized = self._resize_pad(gray_norm, self.cfg.target_size, self.cfg.keep_aspect)
-            mask_resized = np.zeros(self.cfg.target_size, dtype=np.uint8)
-            img_norm = self._normalize_unit(resized)
-            return PreprocOutput(img=img_norm, mask=mask_resized, meta=None)
+            return PreprocOutput(
+                img=self._normalize_unit(resized),
+                mask=np.zeros(self.cfg.target_size, dtype=np.uint8),
+                meta=None
+            )
 
-        obj_mask = np.zeros_like(mask, dtype=np.uint8)
+        # 3) Crop alineado (o axis-aligned si así se pidió), con un padding suave
+        obj_mask = np.zeros_like(mask0, dtype=np.uint8)
         cv2.drawContours(obj_mask, [best_contour], -1, color=255, thickness=-1)
 
         rotate_mode = self.cfg.rotate_crop_mode
         square_crop = False
         use_rotation = True
-
         if rotate_mode == "auto":
             if best_feat["holes"] >= 1 and best_feat["circularity"] > 0.6:
                 square_crop = True
@@ -146,22 +148,40 @@ class ImgPreproc:
 
         if crop_img.size == 0 or crop_mask.size == 0:
             resized = self._resize_pad(gray_norm, self.cfg.target_size, self.cfg.keep_aspect)
-            mask_resized = np.zeros(self.cfg.target_size, dtype=np.uint8)
-            img_norm = self._normalize_unit(resized)
-            return PreprocOutput(img=img_norm, mask=mask_resized, meta=None)
+            return PreprocOutput(
+                img=self._normalize_unit(resized),
+                mask=np.zeros(self.cfg.target_size, dtype=np.uint8),
+                meta=None
+            )
 
-        if crop_img.ndim == 3:
-            crop_gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
-        else:
-            crop_gray = crop_img
+        # 4) Trabajar SIEMPRE en gris en el crop
+        crop_gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY) if crop_img.ndim == 3 else crop_img
 
-        crop_mask = self._ensure_mask_uint8(crop_mask)
-
+        # 5) Redimensionado canónico y semilla opcional de etapa 1
         img_resized = self._resize_pad(crop_gray, self.cfg.target_size, self.cfg.keep_aspect)
-        mask_resized = self._resize_pad(crop_mask, self.cfg.target_size, self.cfg.keep_aspect, is_mask=True)
-        mask_resized = self._ensure_mask_uint8(mask_resized)
+        seed_resized = self._resize_pad(crop_mask, self.cfg.target_size, self.cfg.keep_aspect, is_mask=True)
 
+        # 6) Nivelar iluminación a escala del crop (separación de escalas) y binarizar
+        H, W = self.cfg.target_size
+        sigma_crop = max(H, W) * float(self.cfg.crop_illum_ratio)
+        gray_eq = self._normalize_illum_sigma(img_resized, sigma_crop)
+
+        mask_fina0 = self._bin_mask(
+            gray_eq,
+            open_ksize=self.cfg.open_ksize,
+            close_ksize=self.cfg.close_ksize
+        )
+
+        # 7) Opcional: recortar por la semilla para ignorar fondo ruidoso
+        if self.cfg.use_seed_from_stage1:
+            mask_fina0 = cv2.bitwise_and(mask_fina0, seed_resized)
+
+        # 8) Materializar la máscara “materia = exterior − agujeros” con jerarquía
+        mask_materia = self._material_mask_from(mask_fina0, prefer_seed=seed_resized if self.cfg.use_seed_from_stage1 else None)
+
+        # 9) Salidas normalizadas
         img_norm = self._normalize_unit(img_resized)
+        mask_u8 = self._ensure_mask_uint8(mask_materia)
 
         meta = None
         if self.cfg.return_meta:
@@ -175,20 +195,30 @@ class ImgPreproc:
                 holes=int(best_feat["holes"]),
                 M_warp=M.astype(np.float32, copy=False),
             )
+        return PreprocOutput(img=img_norm, mask=mask_u8, meta=meta)
 
-        return PreprocOutput(img=img_norm, mask=mask_resized, meta=meta)
 
     # ------------------------------------------------------------------ #
     # Helpers privados
     # ------------------------------------------------------------------ #
-    def _normalize_illum(self, gray: np.ndarray) -> np.ndarray:
+    def _normalize_illum(
+            self, 
+            gray: np.ndarray
+            ) -> np.ndarray:
         """Filtra iluminación de baja frecuencia y reescala a [0,255]."""
 
         bg = cv2.GaussianBlur(gray, (0, 0), sigmaX=self.cfg.illum_sigma, sigmaY=self.cfg.illum_sigma)
         norm = cv2.addWeighted(gray, 1.0, bg, -1.0, 128.0)
         return cv2.normalize(norm, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
-    def _bin_mask(self, gray_norm: np.ndarray, *, force_adaptive: Optional[bool] = None) -> MaskU8:
+    def _bin_mask(
+            self, 
+            gray_norm: np.ndarray, 
+            open_ksize: int = 3,
+            close_ksize: int = 3,
+            *, 
+            force_adaptive: Optional[bool] = None
+            ) -> MaskU8:
         """Genera una máscara binaria robusta a partir de la imagen normalizada."""
 
         use_adaptive = self.cfg.use_adaptive if force_adaptive is None else force_adaptive
@@ -205,11 +235,11 @@ class ImgPreproc:
         else:
             _, mask = cv2.threshold(255 - g, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-        if self.cfg.open_ksize > 1:
-            k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.cfg.open_ksize, self.cfg.open_ksize))
+        if open_ksize > 1:
+            k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_ksize, open_ksize))
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k_open, iterations=1)
-        if self.cfg.close_ksize > 1:
-            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.cfg.close_ksize, self.cfg.close_ksize))
+        if close_ksize > 1:
+            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_ksize, close_ksize))
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k_close, iterations=1)
         return mask.astype(np.uint8, copy=False)
 
@@ -422,3 +452,60 @@ class ImgPreproc:
         else:
             x.fill(0.0)
         return x
+
+
+    def _normalize_illum_sigma(self, gray: np.ndarray, sigma: float) -> np.ndarray:
+        """
+        # Versión parametrizable de la nivelación de iluminación para trabajar a escala del crop.
+        """
+        bg = cv2.GaussianBlur(gray, (0, 0), sigmaX=sigma, sigmaY=sigma)
+        norm = cv2.addWeighted(gray, 1.0, bg, -1.0, 128.0)
+        return cv2.normalize(norm, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    
+
+
+    
+
+
+    def _material_mask_from(self, mask_bin: np.ndarray, prefer_seed: Optional[np.ndarray] = None) -> np.ndarray:
+        """
+        Construye máscara de 'materia' respetando jerarquía:
+        toma el mejor exterior (por solape con seed o por área) y resta sus hijos (agujeros).
+        """
+        cnts, hier = cv2.findContours(mask_bin, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        if hier is None or len(cnts) == 0:
+            return np.zeros_like(mask_bin, dtype=np.uint8)
+        hier = hier[0]
+
+        # elegir exterior: máximo solape con seed, si hay; si no, por área
+        best_idx = -1
+        best_score = -1.0
+        for i, c in enumerate(cnts):
+            if hier[i][3] != -1:  # parent != -1 => no es exterior
+                continue
+            area = cv2.contourArea(c)
+            if area <= 0:
+                continue
+            score = area
+            if prefer_seed is not None is not None:
+                tmp = np.zeros_like(mask_bin, dtype=np.uint8)
+                cv2.drawContours(tmp, [c], -1, 255, -1)
+                inter = cv2.countNonZero(cv2.bitwise_and(tmp, prefer_seed))
+                score = inter + 1e-3 * area  # prior: solape manda, el área desempata
+            if score > best_score:
+                best_score, best_idx = score, i
+
+        if best_idx < 0:
+            return np.zeros_like(mask_bin, dtype=np.uint8)
+
+        # dibujar exterior
+        out = np.zeros_like(mask_bin, dtype=np.uint8)
+        cv2.drawContours(out, [cnts[best_idx]], -1, 255, -1)
+
+        # restar agujeros (hijos del exterior elegido)
+        child = hier[best_idx][2]
+        while child != -1:
+            cv2.drawContours(out, [cnts[child]], -1, 0, -1)
+            child = hier[child][0]  # siguiente hermano
+
+        return out
