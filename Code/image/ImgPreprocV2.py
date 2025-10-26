@@ -10,138 +10,105 @@ import numpy as np
 from Code.types import ColorImageU8, MaskU8
 
 
-# === CONFIGURACIÓN ===
 @dataclass(frozen=True, slots=True)
-class ImgPreprocCfg:
-    """Configuración para el preprocesamiento de imágenes."""
+class ImgPreprocV2Cfg:
+    """Parámetros configurables para el pipeline basado en substracción de fondo."""
 
     target_size: Tuple[int, int] = (256, 256)
-    clahe_clip: float = 2.0
-    clahe_grid: Tuple[int, int] = (8, 8)
-    filter_mode: str = "guided"
-    bilateral_d: int = 9
-    bilateral_sigma_color: int = 75
-    bilateral_sigma_space: int = 75
-    canny_ratio: float = 0.33
+    blur_kernel: int = 25
+    contrast_weight: float = 1.5
+    smooth_mode: str = "gaussian"
     detect_edge_mode: str = "percentile"
     morph_kernel_size: Tuple[int, int] = (3, 3)
 
 
-# === PIPELINE ===
-class ImgPreproc:
-    """Pipeline robusto a iluminación: segmenta, recorta y normaliza un objeto."""
+class ImgPreprocV2:
+    """Pipeline de preprocesamiento robusto a iluminación basado en substracción de fondo."""
 
-    def __init__(self, cfg: ImgPreprocCfg | None = None):
-        self.cfg = cfg or ImgPreprocCfg()
+    def __init__(self, cfg: ImgPreprocV2Cfg | None = None) -> None:
+        self.cfg = cfg or ImgPreprocV2Cfg()
         self.kernel = np.ones(self.cfg.morph_kernel_size, dtype=np.uint8)
 
-    # === MÉTODO PRINCIPAL ===
-    def process(
-        self,
-        path: Path,
-    ) -> Tuple[ColorImageU8, MaskU8, Dict[str, object]]:
+    def process(self, path: Path) -> Tuple[ColorImageU8, MaskU8, Dict[str, object]]:
+        """Ejecuta el pipeline completo y retorna imagen recortada, máscara y metadatos."""
         path = Path(path)
-        img = self._read_image(path)
-        lab = self._to_lab(img)
-        L_eq = self._equalize_luminance(lab)
-        L_filtered = self._filter_adaptive(L_eq)
-        edges = self._detect_edges(L_filtered)
+        img = self._path2img(path)
+        lab = self._BGR2Lab(img)
+        L_channel = lab[:, :, 0]
+
+        L_normalized = self._normalize_luminance(L_channel)
+        L_smoothed = self._smooth(L_normalized)
+        edges = self._edges_with_canny(L_smoothed)
         mask = self._build_mask(edges)
         cropped_img, cropped_mask, meta = self._crop_and_normalize(img, mask)
         return cropped_img, cropped_mask, meta
 
-    # === SUBMÉTODOS ===
-    def _read_image(self, path: Path) -> ColorImageU8:
+    # ------------------------------------------------------------------ #
+    def _path2img(self, path: Path) -> ColorImageU8:
         img = cv.imread(str(path), cv.IMREAD_COLOR)
         if img is None:
             raise FileNotFoundError(f"No se pudo leer la imagen: {path}")
         return img
 
-    def _to_lab(self, img: np.ndarray) -> np.ndarray:
+    def _BGR2Lab(self, img: np.ndarray) -> np.ndarray:
         return cv.cvtColor(img, cv.COLOR_BGR2Lab)
 
-    def _equalize_luminance(
-        self, 
-        lab_img: np.ndarray,
-        normalize: bool = True
-        ) -> np.ndarray:
-        
-        # Extraer canal L
-        L, _, _ = cv.split(lab_img)
-        
-        # Aplicar CLAHE con configuración más suave
-        clahe = cv.createCLAHE(
-            clipLimit=self.cfg.clahe_clip,      
-            tileGridSize=self.cfg.clahe_grid, 
+    def _normalize_luminance(self, L_channel: np.ndarray) -> np.ndarray:
+        """Elimina fondo suave y reescala la luminancia."""
+        blur_size = max(3, int(self.cfg.blur_kernel))
+        if blur_size % 2 == 0:
+            blur_size += 1  # kernel debe ser impar
+
+        L_float = L_channel.astype(np.float32)
+        background = cv.GaussianBlur(L_float, (blur_size, blur_size), 0)
+        background_weight = -(self.cfg.contrast_weight - 1.0)
+        rebalance = cv.addWeighted(
+            L_float,
+            self.cfg.contrast_weight,
+            background,
+            background_weight,
+            0.0,
         )
-        
-        L_eq = clahe.apply(L)
 
-        if normalize:
-            # Normalizar a rango completo (opcional, mejora contraste global)
-            L_eq = cv.normalize(L_eq, None, 0, 255, cv.NORM_MINMAX)
+        normalized = cv.normalize(rebalance, None, 0, 255, cv.NORM_MINMAX)
+        return normalized.astype(np.uint8)
 
-        return L_eq
-
-    def _filter_adaptive(self, L_channel: np.ndarray) -> np.ndarray:
-        mode = getattr(self.cfg, "filter_mode", "gaussian").lower()
+    def _smooth(self, L_channel: np.ndarray) -> np.ndarray:
+        mode = getattr(self.cfg, "smooth_mode", "gaussian").lower()
 
         if mode == "gaussian":
-            # Filtro simple, eficiente
-            L_filtered = cv.GaussianBlur(L_channel, (5, 5), 0)
+            return cv.GaussianBlur(L_channel, (5, 5), 0)
 
-        elif mode == "guided":
-            # Requiere opencv-contrib-python
-            try:
-                gf = cv.ximgproc.createGuidedFilter(L_channel, radius=10, eps=80)
-                L_filtered = gf.filter(L_channel)
-            except AttributeError:
+        if mode == "guided":
+            if not hasattr(cv, "ximgproc"):
                 raise RuntimeError("Guided filter no disponible (instala opencv-contrib-python)")
+            guide = L_channel
+            gf = cv.ximgproc.createGuidedFilter(guide, radius=8, eps=50)
+            filtered = gf.filter(L_channel)
+            return np.clip(filtered, 0, 255).astype(np.uint8)
 
-        elif mode == "bilateral":
-            L_filtered = cv.bilateralFilter(
-                L_channel,
-                d=self.cfg.bilateral_d,
-                sigmaColor=self.cfg.bilateral_sigma_color,
-                sigmaSpace=self.cfg.bilateral_sigma_space,
-            )
+        if mode == "bilateral":
+            return cv.bilateralFilter(L_channel, d=9, sigmaColor=75, sigmaSpace=75)
 
-        else:
-            raise ValueError(f"Modo de filtro no reconocido: {mode}")
+        raise ValueError(f"Modo de suavizado no reconocido: {mode}")
 
-        # Limpieza morfológica opcional para quitar puntos de ruido
-        kernel = np.ones((3, 3), np.uint8)
-        L_filtered = cv.morphologyEx(L_filtered, cv.MORPH_OPEN, kernel, iteration=3)
+    def _edges_with_canny(self, L_channel: np.ndarray) -> np.ndarray:
+        mode = getattr(self.cfg, "detect_edge_mode", "percentile").lower()
 
-        return L_filtered
-
-    def _detect_edges(
-        self, 
-        L_channel: np.ndarray, 
-        mode: str = "percentile"
-        ) -> np.ndarray:
-        """
-        # Modes:
-            * 'percentile' (default)
-            * 'stddev'
-            * 'fallback' 
-        """
         if mode == "percentile":
             low, high = np.percentile(L_channel, (5, 95))
             lower = int(max(0, low))
             upper = int(min(255, high))
         elif mode == "stddev":
             mean, std = cv.meanStdDev(L_channel)
-            lower = int(max(0, mean - std))
-            upper = int(min(255, mean + std))
-        else:  # fallback a mediana
-            v = float(np.median(L_channel))
-            lower = int(max(0, (1.0 - self.cfg.canny_ratio) * v))
-            upper = int(min(255, (1.0 + self.cfg.canny_ratio) * v))
+            lower = int(max(0, float(mean - std)))
+            upper = int(min(255, float(mean + std)))
+        else:
+            raise ValueError(f"Modo de detección de bordes no reconocido: {mode}")
+
         if lower == upper:
             upper = min(255, lower + 1)
         return cv.Canny(L_channel, lower, upper)
-
 
     def _build_mask(self, edges: np.ndarray) -> MaskU8:
         edges_closed = cv.morphologyEx(edges, cv.MORPH_CLOSE, self.kernel, iterations=2)
@@ -176,7 +143,7 @@ class ImgPreproc:
         }
         return img_norm, mask_norm, meta
 
-    # === UTILITARIOS ===
+    # ------------------------------------------------------------------ #
     @staticmethod
     def _resize_with_padding(img: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
         target_h, target_w = size
@@ -190,7 +157,7 @@ class ImgPreproc:
         new_w = max(1, int(round(w * scale)))
         new_h = max(1, int(round(h * scale)))
 
-        interpolation = cv.INTER_NEAREST if ImgPreproc._is_mask_like(img) else cv.INTER_AREA
+        interpolation = cv.INTER_NEAREST if ImgPreprocV2._is_mask_like(img) else cv.INTER_AREA
         resized = cv.resize(img, (new_w, new_h), interpolation=interpolation)
 
         delta_w = target_w - new_w
@@ -217,4 +184,9 @@ class ImgPreproc:
         if img.dtype != np.uint8:
             return False
         unique_values = np.unique(img)
-        return np.array_equal(unique_values, [0]) or np.array_equal(unique_values, [255]) or np.array_equal(unique_values, [0, 255])
+        return (
+            np.array_equal(unique_values, [0])
+            or np.array_equal(unique_values, [255])
+            or np.array_equal(unique_values, [0, 255])
+        )
+

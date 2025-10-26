@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, Optional, Seque
 import cv2
 import numpy as np
 
-from Code.types import ColorImageU8, GrayImageF32, MatF, MaskU8, VecF
+from Code.types import ColorImageU8, GrayImageF32, MatF, MaskU8, VecF, VecI
 from Code.image.ImgPreproc import ImgPreproc
 from Code.image.ImgFeat import ImgFeat
 from Code.image.KmeansModel import KMeans
@@ -179,8 +179,8 @@ class ImgOrchestrator:
 
     # --- prediction --------------------------------------------------------------
     def identify(
-            self, 
-            img: np.ndarray
+            self,
+            img: ColorImageU8
             ) -> str:
         """
         ### Identificación directa
@@ -428,7 +428,7 @@ class ImgOrchestrator:
     def _procesar_para_vector(
             self,
             entrada: Union[ImagePath, ColorImageU8]
-            ) -> Tuple[np.ndarray, GrayImageF32, MaskU8]:
+            ) -> Tuple[VecF, GrayImageF32, MaskU8]:
         """
         ### Pipeline interno
         Normaliza, segmenta y extrae el vector de características.
@@ -459,12 +459,12 @@ class ImgOrchestrator:
         return vec.copy()
 
     def _extract_feature_from_array(
-            self, 
-            img: np.ndarray
+            self,
+            img: ColorImageU8
             ) -> VecF:
         """
         ### Compatibilidad histórica
-        Mantiene la firma previa para obtener el vector desde `np.ndarray`.
+        Mantiene la firma previa para recibir un arreglo BGR uint8.
         - Devuelve copia float64 en forma 1D
         """
         vec, _, _ = self._procesar_para_vector(img)
@@ -480,7 +480,7 @@ class ImgOrchestrator:
         - Reutiliza `_preparar_vector` para cada elemento
         """
         
-        features: list[np.ndarray] = []
+        features: list[VecF] = []
         labels: list[str] = []
         
         for path in paths:
@@ -497,8 +497,8 @@ class ImgOrchestrator:
 
     def _calibrar_oni(
             self, 
-            etiquetas: np.ndarray, 
-            distancias: np.ndarray
+            etiquetas: VecI,
+            distancias: MatF
             ) -> Dict[int, float]:
         """
         ### Calibración ONI
@@ -519,7 +519,7 @@ class ImgOrchestrator:
 
     def _build_mapping(
             self, 
-            assignments: np.ndarray, 
+            assignments: VecI,
             labels: Sequence[str]
             ) -> Dict[int, str]:
         """
@@ -552,7 +552,7 @@ def load_centroids_from_file(path: ImagePath) -> None:
     _DEFAULT_ORCHESTRATOR.load_centroids_from_file(path)
 
 
-def identify(img: np.ndarray) -> str:
+def identify(img: ColorImageU8) -> str:
     """Identify the class name for an already-loaded image."""
     return _DEFAULT_ORCHESTRATOR.identify(img)
 

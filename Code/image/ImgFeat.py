@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 import cv2
 import numpy as np
 
+from Code.types import GrayImageF32, MaskU8, VecF
+
 if TYPE_CHECKING:
     from Code.image.ImgPreproc import SegMeta  # pragma: no cover
 
@@ -57,10 +59,10 @@ class ImgFeat:
     # ------------------------------------------------------------------ #
     def extract(
         self,
-        img_norm: np.ndarray,
-        mask: np.ndarray,
+        img_norm: GrayImageF32,
+        mask: MaskU8,
         meta: Optional["SegMeta"] = None,
-    ) -> Tuple[np.ndarray, List[str], Dict[str, object]]:
+    ) -> Tuple[VecF, List[str], Dict[str, object]]:
         """
         Calcula el vector de features y metadatos de apoyo.
 
@@ -90,7 +92,7 @@ class ImgFeat:
 
         if mask_u8 is None or cv2.countNonZero(mask_u8) == 0:
             debug["empty_mask"] = True
-            return np.zeros(n_dim, dtype=np.float32), names, debug
+            return np.zeros(n_dim, dtype=np.float64), names, debug
 
         img_f32 = np.asarray(img_norm, dtype=np.float32, copy=False)
 
@@ -119,7 +121,7 @@ class ImgFeat:
             contour_from_mask = True
             if contour is None or len(contour) < 3:
                 debug["empty_contour"] = True
-                return np.zeros(n_dim, dtype=np.float32), names, debug
+                return np.zeros(n_dim, dtype=np.float64), names, debug
         else:
             hierarchy = None  # reutilizaremos la máscara para métricas de huecos
 
@@ -192,12 +194,12 @@ class ImgFeat:
         if self.mode == "7D":
             vec_values.extend([float(perimeter_ratio), float(inner_gradient)])
 
-        vec = np.asarray(vec_values, dtype=np.float32)
+        vec = np.asarray(vec_values, dtype=np.float64)
         return vec, names, debug
 
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _ensure_mask_uint8(mask: np.ndarray) -> np.ndarray:
+    def _ensure_mask_uint8(mask: MaskU8 | np.ndarray) -> MaskU8:
         """Convierte la máscara a uint8 {0,255}."""
 
         if mask is None:
