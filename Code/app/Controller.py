@@ -17,14 +17,18 @@ class Controller:
     repo: Repositorio
 
     def train_kmeans_instance(self) -> None:
-        paths = self.repo.list_images(["tornillo", "clavo", "arandela", "tuerca"])
-        self.vision.train_from_path(paths=paths)
+        dataset_dir = self.repo.root / "DataBase" / "data" / "images1"
+        self.vision.entrenar(
+            dataset_dir,
+            labels=["tornillo", "clavo", "arandela", "tuerca"],
+        )
         self.repo.save_model("vision", "EntrenamientoKMeans", self.vision)
 
     def run_episode(self) -> None:
-        # 1) Tomar/leer 10 imágenes (placeholder: pedir a vision que lo haga)
-        X_img, labels_img = self.vision.predict_batch(10)  # define este helper en ImgOrchestrator
-        conteo = {c:int(sum(l == c for l in labels_img)) for c in self.vision.class_names}
+        # 1) Tomar/leer 10 imágenes recientes del último fit
+        resultados = self.vision.predecir_lote(10)
+        labels_img = [r["class_name"] for r in resultados]
+        conteo = {c: int(sum(l == c for l in labels_img)) for c in self.vision.class_names}
 
         # 2) Bayes con hipótesis a-d
         H = [

@@ -2,14 +2,25 @@ import numpy as np
 import numpy.typing as npt
 from typing import TypeAlias, Final
 from pathlib import Path
+import sys
 
 # Raíz del proyecto
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path().resolve().parent
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
 """
 Tener cuidado con imports circulares.
 Si este archivo se importa en otros módulos del proyecto,
 asegurarse de no importar esos módulos aquí.
 """
+# Dtypes (compatibilidad con módulos previos)
+F32: TypeAlias = np.float32
+F64: TypeAlias = np.float64
+I64: TypeAlias = np.int64
+I32: TypeAlias = np.int32
+I8: TypeAlias = np.int8
 
 # Alias genéricos
 ScalarF: TypeAlias = np.float32
@@ -39,12 +50,6 @@ LogProbVec:  TypeAlias = VecF
 LogProbMat:  TypeAlias = MatF
 ClassIdx:    TypeAlias = int       # índice de clase (0..C-1)
 
-# Dtypes (compatibilidad con módulos previos)
-F32: TypeAlias = np.float32
-F64: TypeAlias = np.float64
-I64: TypeAlias = np.int64
-I32: TypeAlias = np.int32
-I8: TypeAlias = np.int8
 
 
 # Dtype numérico del proyecto (punto único de verdad)
