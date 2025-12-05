@@ -16,6 +16,9 @@ from Code.audio.KnnModel import KnnModel, KnnConfig
 
 AudioPath = str | Path
 
+from Code.AliasesUsed import PROJECT_ROOT
+MODELS_DIR = PROJECT_ROOT / "Database" / "models"
+DEFAULT_MODEL_PATH = MODELS_DIR / "knn.npz"
 
 @dataclass(slots=True)
 class AudioOrchestrator:
@@ -160,16 +163,15 @@ class AudioOrchestrator:
 	#                                         --------- Modelo ---------                                 #
 	# -------------------------------------------------------------------------------------------------  #
 
-	def guardar_modelo(self, path: Path | str) -> None:
-		"""
-		### Guardar modelo entrenado
-		Persiste stats, PCA y base proyectada para reconstruir el KNN luego.
-		"""
+	def guardar_modelo(self, path: Path | str | None = None) -> None:
+		"""Guardar modelo entrenado en npz (stats, PCA, base proyectada, config KNN)."""
 		self._ensure_listo()
-		path = Path(path)
-		path.parent.mkdir(parents=True, exist_ok=True)
+		npz_path = Path(path) if path is not None else DEFAULT_MODEL_PATH
+		if not npz_path.is_absolute():
+			npz_path = DEFAULT_MODEL_PATH.parent / npz_path
+		npz_path.parent.mkdir(parents=True, exist_ok=True)
 		np.savez_compressed(
-			path,
+			npz_path,
 			mu=self.stats.mu,
 			sigma=self.stats.sigma,
 			eigvals=self._eigvals,
@@ -183,12 +185,12 @@ class AudioOrchestrator:
 			knn_weighted=self.knn.config.weighted,
 		)
 
-	def cargar_modelo(self, path: Path | str) -> None:
-		"""
-		### Cargar modelo
-		Restaura Standardizer, PCA y base proyectada; reconstruye KNN.
-		"""
-		data = np.load(path, allow_pickle=False)
+	def cargar_modelo(self, path: Path | str | None = None) -> None:
+		"""Cargar modelo desde npz y reconstruir KNN."""
+		npz_path = Path(path) if path is not None else DEFAULT_MODEL_PATH
+		if not npz_path.is_absolute():
+			npz_path = DEFAULT_MODEL_PATH.parent / npz_path
+		data = np.load(npz_path, allow_pickle=False)
 
 		mu = data["mu"].astype(np.float32, copy=False)
 		sigma = data["sigma"].astype(np.float32, copy=False)
@@ -216,9 +218,9 @@ class AudioOrchestrator:
 		self._X_store_raw = None
 		self._y_store = labels
 
-		# reconstruir KNN con config guardada
 		self.knn = KnnModel(config=KnnConfig(k_vecinos=knn_k, tipo_distancia=knn_metric, weighted=knn_weighted))
 		self.knn.cargar_lote(X_proj, labels.tolist())
+
 
 	# -------------------------------------------------------------------------------------------------  #
 	#                                        --------- Predicción ---------                              #

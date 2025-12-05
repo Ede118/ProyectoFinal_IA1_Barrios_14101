@@ -16,6 +16,7 @@ from Code.image.KmeansModel import KMeansModel
 
 ImagePath = str | Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MODELS_DIR = PROJECT_ROOT / "Database" / "models"
 VALID_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
 
 
@@ -59,7 +60,7 @@ class ImgOrchestrator:
 		default_factory=lambda: KMeansModel(n_clusters=4, init_centers=None, random_state=42)
 	)
 
-	cfg: OrchestratorCfg = field(default_factory=OrchestratorCfg)
+	config: OrchestratorCfg = field(default_factory=OrchestratorCfg)
 	class_names: list[str] = field(default_factory=list)
 	class_colors: dict[str, tuple[int, int, int]] = field(default_factory=dict)
 	feature_names: list[str] = field(default_factory=list, init=False)
@@ -196,51 +197,36 @@ class ImgOrchestrator:
 		}
 
 	# --- prediction --------------------------------------------------------------
-	def guardar_modelo(
-		self,
-		path: ImagePath
-		) -> "ImgOrchestrator":
-		"""
-		### Guardado de centroides
-		Persiste los centroides del K-Means en un `.npz` con la clave `C`.
-		- Crea la carpeta destino si no existe.
-		- Requiere que el modelo ya esté entrenado (`_centers` definido).
-		### Resumen
-
-		```
-		orch.guardar_modelo("centroides.npz")
-		```
-		"""
+	def guardar_modelo(self, path: ImagePath) -> "ImgOrchestrator":
 		if self.model._centers is None:
 			raise RuntimeError("No hay centroides para guardar; entrená el modelo primero.")
 		npz_path = Path(path)
+		if not npz_path.is_absolute():
+			npz_path = MODELS_DIR / npz_path
 		npz_path.parent.mkdir(parents=True, exist_ok=True)
 		np.savez(npz_path, C=self.model._centers.astype(np.float32, copy=False))
 		return self
 
 	def cargar_modelo(
-		self, 
+		self,
 		path: ImagePath
-		) -> "ImgOrchestrator":
+	) -> "ImgOrchestrator":
 		"""
 		### Carga de centroides
 		Restaura el modelo a partir de un archivo `.npz` con la clave `C`.
 		- Reemplaza KMeans y reinicia metadatos asociados
 		- Mapea cada cluster a `cluster_{k}` por defecto
-		### Resumen
-
-		```
-		orch.load_centroids_from_file("centroides.npz")
-		```
 		"""
 		npz_path = Path(path)
+		if not npz_path.is_absolute():
+			npz_path = MODELS_DIR / npz_path
 		if not npz_path.is_file():
 			raise FileNotFoundError(f"No se encontró el archivo de centroides: {npz_path}")
 		with np.load(npz_path, allow_pickle=False) as data:
 			if "C" not in data:
 				raise KeyError("El archivo no contiene la clave 'C'.")
 			centroids = data["C"].astype(np.float64, copy=False)
-		
+
 		self.model = KMeansModel(n_clusters=int(centroids.shape[0]), random_state=self.model.random_state)
 		self.model.centers_ = centroids
 		self.model.inertia_ = None
@@ -248,7 +234,7 @@ class ImgOrchestrator:
 		self.class_names = [self.cluster_to_label[i] for i in range(self.model.n_clusters)]
 		self.oni_tau_por_cluster = None
 		self._last_fit_features = None
-		
+
 		return self
 
 	def predecir(
