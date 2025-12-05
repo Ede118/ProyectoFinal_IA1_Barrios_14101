@@ -55,7 +55,7 @@ class KMeansModel:
 	def predict(self, X: np.ndarray) -> np.ndarray:
 		if self._centers is None:
 			raise RuntimeError("Debes llamar a fit(X) antes de predict(X).")
-		X = self._check_X(X)
+		X = self._check_X(X, enforce_min=False)
 		labels = self._assign_labels(X, self._centers)
 		return labels
 
@@ -81,7 +81,7 @@ class KMeansModel:
 		"""
 		if self._centers is None:
 			raise RuntimeError("Debes llamar a fit(X) antes de predecir.")
-		X = self._check_X(X)
+		X = self._check_X(X, enforce_min=False)
 		diff = X[:, np.newaxis, :] - self._centers[np.newaxis, :, :]
 		dist_sq = np.sum(diff**2, axis=2)
 		labels = np.argmin(dist_sq, axis=1)
@@ -89,12 +89,12 @@ class KMeansModel:
 		return labels, d2_min
 
 	# ------------------------------------------------------------------ #
-	def _check_X(self, X: np.ndarray) -> np.ndarray:
+	def _check_X(self, X: np.ndarray, *, enforce_min: bool = True) -> np.ndarray:
 		X = np.asarray(X, dtype=np.float64)
 		if X.ndim != 2:
 			raise ValueError("X debe ser un array 2D de forma (N, F).")
-		N, F = X.shape
-		if N < self.n_clusters:
+		N, F = X.shape	
+		if enforce_min and N < self.n_clusters:
 			raise ValueError(f"n_clusters={self.n_clusters} no puede ser mayor que N={N}.")
 		return X
 

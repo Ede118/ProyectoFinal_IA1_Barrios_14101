@@ -17,6 +17,7 @@ from Code.image.KmeansModel import KMeansModel
 ImagePath = str | Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODELS_DIR = PROJECT_ROOT / "Database" / "models"
+DEFAULT_MODEL_PATH = MODELS_DIR / "kmeans.npz"
 VALID_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
 
 
@@ -202,14 +203,18 @@ class ImgOrchestrator:
 			raise RuntimeError("No hay centroides para guardar; entrená el modelo primero.")
 		npz_path = Path(path)
 		if not npz_path.is_absolute():
-			npz_path = MODELS_DIR / npz_path
+			# Soporta pasar "kmeans.npz" o "Database/models/kmeans.npz" sin duplicar
+			if npz_path.parts[:2] == ("Database", "models"):
+				npz_path = (PROJECT_ROOT / npz_path).resolve()
+			else:
+				npz_path = MODELS_DIR / npz_path
 		npz_path.parent.mkdir(parents=True, exist_ok=True)
 		np.savez(npz_path, C=self.model._centers.astype(np.float32, copy=False))
 		return self
 
 	def cargar_modelo(
 		self,
-		path: ImagePath
+		path: ImagePath = DEFAULT_MODEL_PATH
 	) -> "ImgOrchestrator":
 		"""
 		### Carga de centroides
@@ -219,7 +224,11 @@ class ImgOrchestrator:
 		"""
 		npz_path = Path(path)
 		if not npz_path.is_absolute():
-			npz_path = MODELS_DIR / npz_path
+			# Soporta pasar "kmeans.npz" o "Database/models/kmeans.npz" sin duplicar
+			if npz_path.parts[:2] == ("Database", "models"):
+				npz_path = (PROJECT_ROOT / npz_path).resolve()
+			else:
+				npz_path = MODELS_DIR / npz_path
 		if not npz_path.is_file():
 			raise FileNotFoundError(f"No se encontró el archivo de centroides: {npz_path}")
 		with np.load(npz_path, allow_pickle=False) as data:
@@ -228,8 +237,8 @@ class ImgOrchestrator:
 			centroids = data["C"].astype(np.float64, copy=False)
 
 		self.model = KMeansModel(n_clusters=int(centroids.shape[0]), random_state=self.model.random_state)
-		self.model.centers_ = centroids
-		self.model.inertia_ = None
+		self.model._centers = centroids
+		self.model._inertia = None
 		self.cluster_to_label = {i: f"cluster_{i}" for i in range(self.model.n_clusters)}
 		self.class_names = [self.cluster_to_label[i] for i in range(self.model.n_clusters)]
 		self.oni_tau_por_cluster = None

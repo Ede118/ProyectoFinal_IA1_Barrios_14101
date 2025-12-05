@@ -38,3 +38,5 @@ Thumbs.db
 
 # Carpeta temporal
 /Database/tmp
+/Database/input
+/Database/output

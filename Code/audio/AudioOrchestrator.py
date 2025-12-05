@@ -190,7 +190,7 @@ class AudioOrchestrator:
 		npz_path = Path(path) if path is not None else DEFAULT_MODEL_PATH
 		if not npz_path.is_absolute():
 			npz_path = DEFAULT_MODEL_PATH.parent / npz_path
-		data = np.load(npz_path, allow_pickle=False)
+		data = np.load(npz_path, allow_pickle=True)
 
 		mu = data["mu"].astype(np.float32, copy=False)
 		sigma = data["sigma"].astype(np.float32, copy=False)
@@ -252,11 +252,18 @@ class AudioOrchestrator:
 
 		return salida
 	
-	def grabar_y_guardar(self, nombre: str = "grabacion.wav", dur_sec: float = 2.0) -> Path:
-		# 1) Params de hardware
-		info = sd.query_devices(sd.default.device[0], "input")
-		sr_hw = int(info["default_samplerate"])
-		n_frames = max(1, int(sr_hw * dur_sec))
+	def grabar_audio(
+		self,
+		*,
+		dur_sec: float = 2.0,
+		salida: str | Path | None = None,
+	) -> Path:
+		"""Graba ~dur_sec segundos (mono), resamplea al target y guarda en WAV."""
+		info = sd.query_devices(kind="input")
+		sr_hw = int(info.get("default_samplerate", 0) or 0)
+		if sr_hw <= 0:
+			raise RuntimeError("No se pudo obtener sample rate del dispositivo de entrada.")
+		n_frames = max(1, int(sr_hw * float(dur_sec)))
 
 		# 2) Grabar
 		audio = sd.rec(frames=n_frames, samplerate=sr_hw, channels=1, dtype="float32")
@@ -271,10 +278,17 @@ class AudioOrchestrator:
 		else:
 			sr_save = sr_hw
 
-		# 4) Guardar en Database/input/audio
-		out_dir = Path(__file__).resolve().parents[2] / "Database" / "input" / "audio"
-		out_dir.mkdir(parents=True, exist_ok=True)
-		out_path = out_dir / nombre
+		# 4) Guardar en Database/input/audio (o en la ruta solicitada)
+		if salida is None:
+			out_dir = Path(__file__).resolve().parents[2] / "Database" / "input" / "audio"
+			out_dir.mkdir(parents=True, exist_ok=True)
+			out_path = out_dir / "grabacion.wav"
+		else:
+			out_path = Path(salida)
+			if out_path.suffix == "":
+				out_path = out_path / "grabacion.wav"
+			out_path.parent.mkdir(parents=True, exist_ok=True)
+		audio = audio.astype(np.float32, copy=False)
 		sf.write(out_path, audio, sr_save, subtype="PCM_16")
 		return out_path
 

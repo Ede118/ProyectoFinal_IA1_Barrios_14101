@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>900</width>
-    <height>389</height>
+    <height>459</height>
    </rect>
   </property>
   <property name="palette">
@@ -34,7 +34,17 @@
       </brush>
      </colorrole>
     </inactive>
-    <disabled/>
+    <disabled>
+     <colorrole role="Highlight">
+      <brush brushstyle="SolidPattern">
+       <color alpha="255">
+        <red>65</red>
+        <green>72</green>
+        <blue>78</blue>
+       </color>
+      </brush>
+     </colorrole>
+    </disabled>
    </palette>
   </property>
   <property name="mouseTracking">
@@ -44,7 +54,8 @@
    <string>Identificador de Piezas</string>
   </property>
   <property name="windowIcon">
-   <iconset theme="QIcon::ThemeIcon::Scanner"/>
+   <iconset theme="QIcon::ThemeIcon::Scanner">
+    <normaloff>.</normaloff>.</iconset>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayout" stretch="1,3">
@@ -56,7 +67,34 @@
       <property name="title">
        <string/>
       </property>
-      <layout class="QFormLayout" name="formLayout">
+      <layout class="QGridLayout" name="gridLayout">
+       <item row="0" column="1">
+        <widget class="QLabel" name="ImagenPath">
+         <property name="styleSheet">
+          <string notr="true">font: 9pt &quot;FreeMono&quot;;
+color: #ff9e3d;
+background-color: #111822;
+border: 1px solid #ff9e3d;
+padding: 2px 4px;
+</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
+         </property>
+         <property name="lineWidth">
+          <number>1</number>
+         </property>
+         <property name="midLineWidth">
+          <number>0</number>
+         </property>
+         <property name="text">
+          <string>/home/barrios14101/Documents/GitHub/IA/Database/AV/Image.jpg</string>
+         </property>
+         <property name="textFormat">
+          <enum>Qt::PlainText</enum>
+         </property>
+        </widget>
+       </item>
        <item row="0" column="0">
         <widget class="QPushButton" name="BotonImagen">
          <property name="toolTip">
@@ -64,6 +102,24 @@
          </property>
          <property name="text">
           <string>Analizar Imagen</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QLabel" name="CarpetaPath">
+         <property name="styleSheet">
+          <string notr="true">font: 9pt &quot;FreeMono&quot;;
+color: #ff9e3d;
+background-color: #111822;
+border: 1px solid #ff9e3d;
+padding: 2px 4px;
+</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
+         </property>
+         <property name="text">
+          <string>/home/barrios14101/Documents/GitHub/IA/Database/AV</string>
          </property>
         </widget>
        </item>
@@ -101,58 +157,8 @@
           <string>Comenzar Grabación</string>
          </property>
          <property name="icon">
-          <iconset theme="QIcon::ThemeIcon::MediaRecord"/>
-         </property>
-        </widget>
-       </item>
-       <item row="0" column="1">
-        <widget class="QLabel" name="ImagenPath">
-         <property name="styleSheet">
-          <string notr="true">font: 9pt &quot;FreeMono&quot;;
-color: #ff9e3d;
-background-color: #111822;
-border: 1px solid #ff9e3d;
-padding: 2px 4px;
-</string>
-         </property>
-         <property name="frameShape">
-          <enum>QFrame::Shape::Panel</enum>
-         </property>
-         <property name="frameShadow">
-          <enum>QFrame::Shadow::Sunken</enum>
-         </property>
-         <property name="lineWidth">
-          <number>1</number>
-         </property>
-         <property name="midLineWidth">
-          <number>0</number>
-         </property>
-         <property name="text">
-          <string>/home/barrios14101/Documents/GitHub/IA/Database/AV/Image.jpg</string>
-         </property>
-         <property name="textFormat">
-          <enum>Qt::TextFormat::AutoText</enum>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="1">
-        <widget class="QLabel" name="CarpetaPath">
-         <property name="styleSheet">
-          <string notr="true">font: 9pt &quot;FreeMono&quot;;
-color: #ff9e3d;
-background-color: #111822;
-border: 1px solid #ff9e3d;
-padding: 2px 4px;
-</string>
-         </property>
-         <property name="frameShape">
-          <enum>QFrame::Shape::Panel</enum>
-         </property>
-         <property name="frameShadow">
-          <enum>QFrame::Shadow::Sunken</enum>
-         </property>
-         <property name="text">
-          <string>/home/barrios14101/Documents/GitHub/IA/Database/AV</string>
+          <iconset theme="QIcon::ThemeIcon::MediaRecord">
+           <normaloff>.</normaloff>.</iconset>
          </property>
         </widget>
        </item>
@@ -188,12 +194,73 @@ padding: 2px 4px;
              </brush>
             </colorrole>
            </inactive>
-           <disabled/>
+           <disabled>
+            <colorrole role="Highlight">
+             <brush brushstyle="SolidPattern">
+              <color alpha="255">
+               <red>65</red>
+               <green>72</green>
+               <blue>78</blue>
+              </color>
+             </brush>
+            </colorrole>
+           </disabled>
           </palette>
          </property>
          <property name="value">
           <number>24</number>
          </property>
+        </widget>
+       </item>
+       <item row="3" column="1">
+        <widget class="QWidget" name="widget" native="true">
+         <layout class="QHBoxLayout" name="horizontalLayout_2">
+          <item>
+           <widget class="QLabel" name="ComandoLabel">
+            <property name="text">
+             <string>Comando identificado: ---</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="BotonConfirmarCmd">
+            <property name="styleSheet">
+             <string notr="true">QPushButton {
+    background-color: #2e7d32;
+    color: white;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+QPushButton:hover {
+    background-color: #388e3c;
+}
+</string>
+            </property>
+            <property name="text">
+             <string>Confirmar</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="BotonReproducirCmd">
+            <property name="styleSheet">
+             <string notr="true">QPushButton {
+    background-color: #c62828;
+    color: white;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+QPushButton:hover {
+    background-color: #d32f2f;
+}
+</string>
+            </property>
+            <property name="text">
+             <string>Reproducir</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
        </item>
       </layout>
