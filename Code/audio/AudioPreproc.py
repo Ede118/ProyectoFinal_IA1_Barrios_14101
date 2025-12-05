@@ -5,14 +5,14 @@ import librosa
 import librosa.effects as fx
 
 import scipy.signal as sps
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, sosfiltfilt, lfilter
 from scipy.io import wavfile
 
 from math import gcd
 
 from dataclasses import dataclass, field
-from typing import Literal
-from Code.types import VecF, F32, AudioSignal
+from typing import Literal, ClassVar
+from Code.AliasesUsed import VecF, F32, AudioSignal
 
 
 
@@ -24,11 +24,12 @@ from Code.types import VecF, F32, AudioSignal
 class AudioPreprocConfig:
 	# Normalización de sampling y duración
 	target_sr: int = 16000								# f_ss [Hz]
-	t_sec: float = 1.2									# T_fija [s]
+	T_sec: float = 1.2									# T_fija [s]
 
 	# Ventaneo (para VAD y, luego, AudioFeat)
 	frame_ms: float = 25.0
 	hop_ms: float = 10.0
+	top_dB: float = 35.
 
 	# Filtro
 	corte_pasaalto: float = 80.0        				# f_corte del pasa-alto
@@ -75,7 +76,6 @@ class AudioPreproc:
 		audio_proc, sr_out = preproc.preprocesar(y, sr_in)
 		```
 		"""
-		
 		audio_path = Path(audio_path)
 		if not audio_path.is_file():
 			raise ValueError("No se ha pasado un path válido al archivo de audio.")
@@ -89,6 +89,7 @@ class AudioPreproc:
 			sr=self.config.target_sr,
 			mono=True
 		)
+
 
 		# 2) Filtro pasa-alto (rumble fuera)
 		y = self._filtro_pasa_alto(
@@ -108,9 +109,9 @@ class AudioPreproc:
 		y = self._simple_vad(
 			audio=y,
 			sampling_rate=self.config.target_sr,
-			frame_ms=self.config.vad_frame_ms,
-			hop_ms=self.config.vad_hop_ms,
-			top_db=self.config.vad_top_db
+			frame_ms=self.config.frame_ms,
+			hop_ms=self.config.hop_ms,
+			top_db=self.config.top_dB
 		)
 
 		# 5) Normalización de nivel (RMS o pico) con guardarraíles
@@ -127,7 +128,7 @@ class AudioPreproc:
 		y = self._arreglar_duracion(
 			y, 
 			self.config.target_sr, 
-			self.config.t_sec, 
+			self.config.T_sec, 
 			pad_mode=self.config.pad_mode, 
 			center_crop=False
 		)
@@ -154,6 +155,7 @@ class AudioPreproc:
 	#                       ---------- Helpers Privados ----------                                       #
 	# -------------------------------------------------------------------------------------------------  #
 
+	@staticmethod
 	def _filtro_pasa_alto(
 		audio: AudioSignal,
 		sampling_rate: int,
@@ -174,7 +176,7 @@ class AudioPreproc:
 		nyq = sampling_rate / 2.0
 		norm_cutoff = frecuencia_corte / nyq
 		if not 0 < norm_cutoff < 1:
-			raise ValueError(f"frecuencia de corte={cutoff_hz} no tiene sentido para sampling rate={sampling_rate}")
+			raise ValueError(f"frecuencia de corte={frecuencia_corte} no tiene sentido para sampling rate={sampling_rate}")
 
 		sos = butter(order, norm_cutoff, btype="highpass", output="sos")
 		y_hp = sosfiltfilt(sos, y)

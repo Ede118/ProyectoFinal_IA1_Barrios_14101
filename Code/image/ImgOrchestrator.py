@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from Code.types import ImgColor, ImgGray, Mask, MatF, VecF
+from Code.AliasesUsed import ImgColor, ImgGray, Mask, MatF, VecF
 from Code.image.ImgPreproc import ImgPreproc, ImgPreprocCfg
 from Code.image.ImgFeat import ImgFeat, hyper_params
 from Code.image.KmeansModel import KMeansModel
@@ -32,9 +32,9 @@ class OrchestratorCfg:
 class ImgOrchestrator:
 	"""High-level coordinator for the vision pipeline."""
 
-	pre: ImgPreproc = field(
+	IProc: ImgPreproc = field(
 		default_factory=lambda: ImgPreproc(
-			cfg=ImgPreprocCfg(
+			config=ImgPreprocCfg(
 				target_size=512,
 				sigma=2.0,
 				flag_refine_mask=True,
@@ -44,7 +44,7 @@ class ImgOrchestrator:
 		)
 	)
 
-	feat: ImgFeat = field(
+	IFeat: ImgFeat = field(
 		default_factory=lambda: ImgFeat(
 			hp=hyper_params(
 				radial_var_t_low=0.0,
@@ -96,7 +96,7 @@ class ImgOrchestrator:
 			Centros iniciales opcionales (shape (k, F)). Si se proveen, definen k.
 		output_root : str | Path | None
 			Carpeta base para salidas. Default: `PROJECT_ROOT/Database/tmp/image`.
-		labels : sequence[str] | None
+		labels : Sequence[str] | None
 			Si se indica, solo usa las carpetas con esos nombres (case-insensitive).
 		"""
 		dataset_path = Path(dataset_dir)
@@ -136,14 +136,14 @@ class ImgOrchestrator:
 			if img_bgr is None:
 				continue
 
-			img_sq, mask_sq = self.pre.procesar(img_bgr, blacknwhite=False)
+			img_sq, mask_sq = self.IProc.procesar(img_bgr, blacknwhite=False)
 
 			clase_dir = out_path / p.parent.name
 			clase_dir.mkdir(parents=True, exist_ok=True)
 			cv2.imwrite(str(clase_dir / f"{p.stem} recortada.png"), img_sq)
 			cv2.imwrite(str(clase_dir / f"{p.stem} mask.png"), mask_sq)
 
-			vec, names_local, _ = self.feat.extraer_features(img_sq, mask_sq)
+			vec, names_local, _ = self.IFeat.extraer_features(img_sq, mask_sq)
 			vec = np.asarray(vec, dtype=np.float64).reshape(-1)
 			if names is None:
 				names = list(names_local)
@@ -275,11 +275,19 @@ class ImgOrchestrator:
 			if candidate.exists():
 				base = candidate
 		if not base.exists():
-			raise FileNotFoundError(f"No existe el directorio: {base}")
+			raise FileNotFoundError(f"No existe el directorio o archivo: {base}")
 
-		it: Iterator[Path] = base.rglob("*") if recursive else base.glob("*")
 		valid_exts = {e.lower() for e in exts}
-		paths = sorted(p for p in it if p.suffix.lower() in valid_exts)
+		if base.is_file():
+			if base.suffix.lower() not in valid_exts:
+				raise RuntimeError(f"Extensión no soportada para: {base}")
+			paths = [base]
+			base_dir = base.parent
+		else:
+			it: Iterator[Path] = base.rglob("*") if recursive else base.glob("*")
+			paths = sorted(p for p in it if p.suffix.lower() in valid_exts)
+			base_dir = base
+
 		if not paths:
 			raise RuntimeError(f"No encontré imágenes en: {base}")
 
@@ -299,7 +307,10 @@ class ImgOrchestrator:
 		resultado: list[dict[str, Any]] = []
 		for i, (ruta, idx) in enumerate(zip(paths, etiquetas), start=1):
 			label = self.cluster_to_label.get(int(idx), f"cluster_{int(idx)}")
-			path_rel = str(ruta.relative_to(base)) if ruta.is_relative_to(base) else str(ruta)
+			try:
+				path_rel = str(ruta.relative_to(base_dir))
+			except ValueError:
+				path_rel = str(ruta)
 			resultado.append(
 				{
 					"id": i,
@@ -345,16 +356,16 @@ class ImgOrchestrator:
 		- Retorna `(vec_float64, img_norm, mask)` listos para predicción
 		"""
 		img_bgr = self._cargar(entrada)
-		img_norm, mask = self.pre.procesar(img_bgr)
+		img_norm, mask = self.IProc.procesar(img_bgr)
 		mask = np.asarray(mask, dtype=np.uint8, copy=False)
-		vec, names, debug = self.feat.extraer_features(img_norm=img_norm, mask=mask)
+		vec, names, debug = self.IFeat.extraer_features(img_norm=img_norm, mask=mask)
 		self.feature_names = list(names)
 		vec = np.asarray(vec, dtype=np.float64).reshape(-1)
 		return vec, img_norm, mask
 
 	def _preparar_caracteristicas(
 			self, 
-			paths: sequence[ImagePath]
+			paths: Sequence[ImagePath]
 			) -> tuple[MatF, list[str]]:
 		"""
 		### Construcción de dataset
@@ -402,7 +413,7 @@ class ImgOrchestrator:
 	def _build_mapping(
 			self, 
 			assignments: np.ndarray, 
-			labels: sequence[str]
+			labels: Sequence[str]
 			) -> Dict[int, str]:
 		"""
 		### Etiquetado mayoritario

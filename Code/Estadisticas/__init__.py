@@ -1,6 +1,6 @@
 # domain/__init__.py
 from .BayesAgent import BayesAgent
-from Code.types import F64, I64, VecF, VecI, MatF, ArrayLike, DTYPE
+from Code.AliasesUsed import F64, I64, VecF, VecI, MatF, ArrayLike, DTYPE
 
 __all__ = [
     "BayesAgent",

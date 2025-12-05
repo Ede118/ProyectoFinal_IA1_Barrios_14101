@@ -1,10 +1,10 @@
 # domain/BayesAgent.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Sequence
 import numpy as np
 
-from Code.types import VecF, VecI, MatF, ArrayLike, DTYPE
+from Code.AliasesUsed import VecF, VecI, MatF, ArrayLike, DTYPE
 
 # Fallback si SciPy no está disponible
 try:
@@ -16,21 +16,43 @@ except Exception:
 
     # --------------------------------------------------------------------------------------------- #
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class BayesAgent:
     """Bayesian inference helper that works safely in probability or log space."""
 
-    K: int      # n° de hipótesis
-    C: int      # n° de categorias
+    # Se pueden fijar al instanciar o inferir dinámicamente desde los datos.
+    cantidad_objetos: int | None = None      # n° de hipótesis (K)
+    cantidad_clases: int | None = None       # n° de categorías (C)
 
 
     # --------------------------------------------------------------------------------------------- #
 
     def __post_init__(self) -> None:
-            if not (isinstance(self.K, int) and self.K > 0):
-                raise ValueError(f"K debe ser int>0, vino {self.K!r}")
-            if not (isinstance(self.C, int) and self.C > 0):
-                raise ValueError(f"C debe ser int>0, vino {self.C!r}")
+            if self.cantidad_objetos is not None and not (isinstance(self.cantidad_objetos, int) and self.cantidad_objetos > 0):
+                raise ValueError(f"K debe ser int>0, vino {self.cantidad_objetos!r}")
+            if self.cantidad_clases is not None and not (isinstance(self.cantidad_clases, int) and self.cantidad_clases > 0):
+                raise ValueError(f"C debe ser int>0, vino {self.cantidad_clases!r}")
+            
+    # --------------------------------------------------------------------------------------------- #
+
+    def set_dimensiones(self, K: int, C: int) -> None:
+        """Permite fijar K y C en tiempo de ejecución."""
+        if K <= 0 or C <= 0:
+            raise ValueError("K y C deben ser positivos.")
+        self.cantidad_objetos = int(K)
+        self.cantidad_clases = int(C)
+
+    def _ensure_dims(self, K: int, C: int) -> None:
+        """Ajusta o valida dimensiones a partir de shapes recibidas."""
+        if self.cantidad_objetos is None:
+            self.cantidad_objetos = int(K)
+        elif self.cantidad_objetos != int(K):
+            raise ValueError(f"K inconsistente: esperado {self.cantidad_objetos}, vino {K}")
+
+        if self.cantidad_clases is None:
+            self.cantidad_clases = int(C)
+        elif self.cantidad_clases != int(C):
+            raise ValueError(f"C inconsistente: esperado {self.cantidad_clases}, vino {C}")
             
 
     # --------------------------------------------------------------------------------------------- #
@@ -60,13 +82,16 @@ class BayesAgent:
         P = np.asarray(Hipotesis_M, DTYPE)                    # (K,C)
         n = np.asarray(vecN, np.int64).reshape(-1)            # (C,)
 
+        # Ajustar/validar K y C dinámicamente
+        self._ensure_dims(pi.shape[0], P.shape[1])
+
         # Chequeos de contrato
-        if P.shape != (self.K, self.C):
-            raise ValueError(f"P debe ser ({self.K},{self.C}), vino {P.shape}")
-        if pi.shape != (self.K,):
-            raise ValueError(f"pi debe ser ({self.K},), vino {pi.shape}")
-        if n.shape  != (self.C,):
-            raise ValueError(f"n debe ser ({self.C},), vino {n.shape}")
+        if P.shape != (self.cantidad_objetos, self.cantidad_clases):
+            raise ValueError(f"P debe ser ({self.cantidad_objetos},{self.cantidad_clases}), vino {P.shape}")
+        if pi.shape != (self.cantidad_objetos,):
+            raise ValueError(f"pi debe ser ({self.cantidad_objetos},), vino {pi.shape}")
+        if n.shape  != (self.cantidad_clases,):
+            raise ValueError(f"n debe ser ({self.cantidad_clases},), vino {n.shape}")
         if not np.all(n >= 0):
             raise ValueError("n_i deben ser enteros no negativos")
         if not np.isclose(pi.sum(), 1.0, atol=1e-8):
@@ -120,7 +145,7 @@ class BayesAgent:
     def decide(
         self,
         vecPost: VecF,
-        labels: sequence[str] | None = None,
+        labels: Sequence[str] | None = None,
         *,
         tie: Literal["first", "random", "all"] = "first",
         tol: float = 1e-12,
@@ -139,9 +164,14 @@ class BayesAgent:
         """
         p = np.asarray(vecPost, DTYPE).reshape(-1)  # (K,)
 
+        if self.cantidad_objetos is None:
+            # No había K definido; lo inferimos del vector posterior
+            c_val = self.cantidad_clases if self.cantidad_clases is not None else p.shape[0]
+            self._ensure_dims(p.shape[0], c_val)
+
         # Chequeos básicos
-        if p.shape != (self.K,):
-            raise ValueError(f"vecPost debe ser ({self.K},), vino {p.shape}")
+        if p.shape != (self.cantidad_objetos,):
+            raise ValueError(f"vecPost debe ser ({self.cantidad_objetos},), vino {p.shape}")
         if not np.all(np.isfinite(p)):
             raise ValueError("vecPost contiene NaN/Inf")
         if not np.all(p >= -tol):
@@ -155,13 +185,13 @@ class BayesAgent:
 
         # Etiquetas por defecto: A, B, C, ... o H1..HK si K > 26
         if labels is None:
-            if self.K <= 26:
-                labels = [chr(ord('A') + i) for i in range(self.K)]
+            if self.cantidad_objetos <= 26:
+                labels = [chr(ord('A') + i) for i in range(self.cantidad_objetos)]
             else:
-                labels = [f"H{i+1}" for i in range(self.K)]
+                labels = [f"H{i+1}" for i in range(self.cantidad_objetos)]
         else:
-            if len(labels) != self.K:
-                raise ValueError(f"len(labels)={len(labels)} != K={self.K}")
+            if len(labels) != self.cantidad_objetos:
+                raise ValueError(f"len(labels)={len(labels)} != K={self.cantidad_objetos}")
 
         # Detectar máximo y empates (con tolerancia)
         m = float(np.max(p))

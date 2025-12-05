@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import scipy.signal as sps
 
-from Code.types import VecF, MatF, F32
+from Code.AliasesUsed import VecF, MatF, F32
 
 @dataclass(slots=True)
 class Standardizer:

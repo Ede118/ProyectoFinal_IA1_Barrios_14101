@@ -1,9 +1,9 @@
 import numpy as np
 from dataclasses import dataclass, field
 from .Standardizer import Standardizer
-from typing import Literal
+from typing import Literal, Sequence, ClassVar
 
-from Code.types import VecF, MatF, F32
+from Code.AliasesUsed import VecF, MatF, F32
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,20 +11,20 @@ class KnnConfig:
   k_vecinos: int = 5
   tipo_distancia: Literal["cosine", "euclidean"] = "cosine"
   weighted: bool = True
-  eps: float = 1e-6
   reject_max_dist: float | None = None
   ratio_max: float | None = None
+  epsilon: ClassVar[float] = float(np.finfo(np.float32).eps)
 
 
 @dataclass(slots=True)
 class KnnModel:
-	cfg: KnnConfig = field(default_factory=KnnConfig)
+	config: KnnConfig = field(default_factory=KnnConfig)
 
 	# estado tras "fit"
-	X: MatF | None = None            # (N, D) z-scoreado
-	y_idx: np.ndarray | None = None  # (N,) int32
+	X: MatF | None = None            					# (N, D) z-scoreado
+	y_idx: np.ndarray | None = None  					# (N,) int32
 	labels: tuple[str, ...]  | None = None
-	_row_norms: VecF | None = None  # (N,) para métrica coseno
+	_row_norms: VecF | None = None  					# (N,) para métrica coseno
 
 	# -------------------------------------------------------------------------------------------------  #
 	#                              --------- Módulos Públicos  ---------                                 #
@@ -33,7 +33,7 @@ class KnnModel:
 	def cargar_lote(
 		self,
 		matParametros: np.ndarray,   # (N, D) YA estandarizado
-		vecLabel: sequence[str]      # len N
+		vecLabel: Sequence[str]      # len N
 	) -> int:
 		"""
 		### Cargar referencias
@@ -67,9 +67,9 @@ class KnnModel:
 		self.labels = tuple(uniq)
 
 		# precálculo de normas para métrica coseno
-		if self.cfg.tipo_distancia == "cosine":
+		if self.config.tipo_distancia == "cosine":
 			norms = np.linalg.norm(X, axis=1)
-			norms = np.where(norms < self.cfg.eps, 1.0, norms)
+			norms = np.where(norms < self.config.epsilon, 1.0, norms)
 			self._row_norms = norms.astype(F32)
 		else:
 			self._row_norms = None
@@ -156,16 +156,16 @@ class KnnModel:
 		# Forzamos siempre métrica coseno
 		vec_norm = F32(np.linalg.vector_norm(vecAudio))
 
-		if vec_norm < self.cfg.eps:
+		if vec_norm < self.config.epsilon:
 			raise ValueError("Es probablemente silencio.")
 
 		norms = self._row_norms
 		if norms is None:
 			norms = np.linalg.norm(matDB, axis=1)
-			norms = np.where(norms < self.cfg.eps, 1.0, norms)
+			norms = np.where(norms < self.config.epsilon, 1.0, norms)
 
 		dots = matDB @ vecAudio
-		vecDistancias = 1.0 - dots / (norms * vec_norm + self.cfg.eps)
+		vecDistancias = 1.0 - dots / (norms * vec_norm + self.config.epsilon)
 
 		return np.clip(vecDistancias, 0.0, 2.0).astype(F32)
 
@@ -185,7 +185,7 @@ class KnnModel:
 		if self.X is None or self.y_idx is None or self.labels is None:
 			raise RuntimeError("Modelo no inicializado. Llama upload_batch() primero.")
 
-		k = int(self.cfg.k_vecinos)
+		k = int(self.config.k_vecinos)
 		if k <= 0 or k > d.size:
 			raise ValueError("k inválido para el tamaño del batch.")
 
@@ -198,9 +198,9 @@ class KnnModel:
 		d_k = d[idx_k].astype(F32)   # (k,)
 
 		# pesos
-		eps = float(self.cfg.eps)
+		eps = float(self.config.epsilon)
 		d_k = np.maximum(d_k, eps)                    # evita 1/0
-		if self.cfg.weighted:
+		if self.config.weighted:
 			w = 1.0 / (d_k + eps)
 		else:
 			w = np.ones_like(d_k, dtype=F32)

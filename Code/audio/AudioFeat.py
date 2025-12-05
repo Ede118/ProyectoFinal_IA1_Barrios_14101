@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import signal
 
-from Code.types import VecF, MatF, F32, AudioSignal, FeatVec, FeatMat
+from Code.AliasesUsed import VecF, MatF, F32, AudioSignal, FeatVec, FeatMat
 from Code.audio.AudioPreproc import AudioPreproc, AudioPreprocConfig
 
 import librosa
