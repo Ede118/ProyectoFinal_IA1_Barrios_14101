@@ -273,10 +273,10 @@ QPushButton:hover {
       </property>
       <layout class="QHBoxLayout" name="horizontalLayout">
        <item>
-        <widget class="QWidget" name="KMeansGraph" native="true"/>
+        <widget class="QWidget" name="DataFrame" native="true"/>
        </item>
        <item>
-        <widget class="QWidget" name="KNNGraph" native="true"/>
+        <widget class="QWidget" name="KMeansGraph" native="true"/>
        </item>
        <item>
         <widget class="QWidget" name="BayesGraph" native="true"/>

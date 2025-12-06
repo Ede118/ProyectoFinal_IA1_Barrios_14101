@@ -21,6 +21,8 @@ from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
 from matplotlib.figure import Figure
+import numpy as np
+import pandas as pd
 
 from Code.app.AppController import AppController
 
@@ -45,6 +47,49 @@ class RecordCommandTask(QtCore.QRunnable):
 	def run(self) -> None:
 		# Esta función se ejecuta en background
 		self._controller.grabar_audio(duracion_segundos=self._duration_sec, ruta_salida=self._output_path)
+
+
+class PandasTableModel(QtCore.QAbstractTableModel):
+	"""
+	Model simple para mostrar un DataFrame de pandas en un QTableView.
+	"""
+	def __init__(self, df: pd.DataFrame, parent=None) -> None:
+		super().__init__(parent)
+		self._df = df.reset_index(drop=True)
+
+	def rowCount(self, parent: QtCore.QModelIndex = QtCore.QModelIndex()) -> int:  # type: ignore[override]
+		return 0 if parent.isValid() else self._df.shape[0]
+
+	def columnCount(self, parent: QtCore.QModelIndex = QtCore.QModelIndex()) -> int:  # type: ignore[override]
+		return 0 if parent.isValid() else self._df.shape[1]
+
+	def data(self, index: QtCore.QModelIndex, role: int = QtCore.Qt.ItemDataRole.DisplayRole):  # type: ignore[override]
+		if not index.isValid():
+			return None
+		if role not in (QtCore.Qt.ItemDataRole.DisplayRole, QtCore.Qt.ItemDataRole.EditRole):
+			return None
+
+		value = self._df.iloc[index.row(), index.column()]
+		if pd.isna(value):
+			return ""
+		return str(value)
+
+	def headerData(
+		self,
+		section: int,
+		orientation: QtCore.Qt.Orientation,
+		role: int = QtCore.Qt.ItemDataRole.DisplayRole,
+	):  # type: ignore[override]
+		if role != QtCore.Qt.ItemDataRole.DisplayRole:
+			return None
+		if orientation == QtCore.Qt.Orientation.Horizontal:
+			return str(self._df.columns[section])
+		return str(section + 1)
+
+	def flags(self, index: QtCore.QModelIndex) -> QtCore.Qt.ItemFlag:  # type: ignore[override]
+		if not index.isValid():
+			return QtCore.Qt.ItemFlag.NoItemFlags
+		return QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -94,9 +139,31 @@ class MainWindow(QtWidgets.QMainWindow):
 	# 2) Cargar plots de matplotlib
 	# =========================================================
 	def _setup_plots(self) -> None:
-		# Más adelante: crear canvases de matplotlib y meterlos en
-		# KMeansGraph, KNNGraph y BayesGraph.
-		pass
+		# --------- KMEANS: gráfico 3D de features ----------
+		if hasattr(self, "KMeansGraph"):
+			self._kmeans_canvas = FigureCanvas(Figure(figsize=(5, 4)))
+			# 3D
+			self._kmeans_ax = self._kmeans_canvas.figure.add_subplot(111, projection="3d")
+
+			layout = QtWidgets.QVBoxLayout(self.KMeansGraph)
+			layout.setContentsMargins(0, 0, 0, 0)
+			layout.addWidget(self._kmeans_canvas)
+		else:
+			self._kmeans_canvas = None
+			self._kmeans_ax = None
+
+		# --------- BAYES: gráfico de barras ----------
+		if hasattr(self, "BayesGraph"):
+			self._bayes_canvas = FigureCanvas(Figure(figsize=(5, 4)))
+			self._bayes_ax = self._bayes_canvas.figure.add_subplot(111)
+
+			layout = QtWidgets.QVBoxLayout(self.BayesGraph)
+			layout.setContentsMargins(0, 0, 0, 0)
+			layout.addWidget(self._bayes_canvas)
+		else:
+			self._bayes_canvas = None
+			self._bayes_ax = None
+
 
 	# =========================================================
 	# 3) Conectar señales a handlers
@@ -237,19 +304,32 @@ class MainWindow(QtWidgets.QMainWindow):
 			return
 
 		self._start_recording()
-	
-	def _on_confirmar_comando(self) -> None:
-		"""El usuario acepta el comando reconocido."""
-		if self._last_command_label is not None:
-			# Más adelante acá disparás la acción real según el comando
-			QtWidgets.QMessageBox.information(
-				self,
-				"Comando confirmado",
-				f"Se confirmó el comando: {self._last_command_label}"
-			)
 
-		# Después de confirmar, ocultamos los controles
-		self._hide_command_controls()
+	def _on_confirmar_comando(self) -> None:
+		"""
+		El usuario acepta el comando reconocido.
+		Según el comando, disparamos distintas acciones:
+		- 'contar'     -> tabla + gráfico 3D de KMeans
+		- 'proporcion' -> gráfico de Bayes
+		"""
+		label = (self._last_command_label or "").strip().lower()
+
+		try:
+			if label in ("contar", "count"):
+				self._accion_contar()
+			elif label in ("proporcion", "proporción", "proportion"):
+				self._accion_proporcion()
+			else:
+				QtWidgets.QMessageBox.information(
+					self,
+					"Comando no manejado",
+					f"El comando '{self._last_command_label}' está reconocido, "
+					"pero todavía no tiene una acción asociada."
+				)
+		finally:
+			# Siempre ocultamos el bloque de confirmación una vez procesado
+			self._hide_command_controls()
+
 
 	def _on_reproducir_comando(self) -> None:
 		"""
@@ -358,6 +438,25 @@ class MainWindow(QtWidgets.QMainWindow):
 		if not self._current_record_path:
 			return
 
+		# Esperar a que el archivo realmente exista (la grabación va en otro hilo)
+		if not self._current_record_path.is_file():
+			if self._classify_retries < 10:
+				self._classify_retries += 1
+				# reintenta en 100 ms
+				QtCore.QTimer.singleShot(250, self._clasificar_ultimo_comando)
+				return
+			else:
+				QtWidgets.QMessageBox.critical(
+					self,
+					"Error en reconocimiento de voz",
+					f"No se encontró el archivo de audio luego de varios intentos:\n"
+					f"{self._current_record_path}"
+				)
+				return
+
+		# Ya existe: reseteamos el contador de reintentos
+		self._classify_retries = 0
+
 		try:
 			result = self._controller.predecir_audio(self._current_record_path)
 
@@ -384,6 +483,7 @@ class MainWindow(QtWidgets.QMainWindow):
 				f"No se pudo reconocer el comando:\n{exc}"
 			)
 
+
 	def _hide_command_controls(self) -> None:
 		"""Oculta el label y los botones del comando de voz."""
 		if hasattr(self, "ComandoLabel"):
@@ -401,6 +501,225 @@ class MainWindow(QtWidgets.QMainWindow):
 			self.BotonConfirmarCmd.setVisible(True)
 		if hasattr(self, "BotonReproducirCmd"):
 			self.BotonReproducirCmd.setVisible(True)
+
+	# =========================================================
+	# 7) Lógica de gráficos Bayes
+	# =========================================================
+
+	def _update_bayes_plot(self, posterior: np.ndarray, labels_hipotesis: list[str]) -> None:
+		"""
+		Dibuja un gráfico de barras con el posterior de Bayes en BayesGraph.
+		"""
+		if self._bayes_canvas is None or self._bayes_ax is None:
+			return
+
+		posterior = np.asarray(posterior, dtype=float).reshape(-1)
+		K = posterior.shape[0]
+		if len(labels_hipotesis) != K:
+			raise ValueError("Cantidad de labels de hipótesis no coincide con tamaño del posterior.")
+
+		self._bayes_ax.clear()
+
+		idx = np.arange(K)
+		self._bayes_ax.bar(idx, posterior)
+
+		self._bayes_ax.set_xticks(idx)
+		self._bayes_ax.set_xticklabels(labels_hipotesis)
+		self._bayes_ax.set_ylim(0.0, 1.0)
+		self._bayes_ax.set_ylabel("Probabilidad posterior")
+		self._bayes_ax.set_title("Posterior Bayesiano")
+
+		for i, p in enumerate(posterior):
+			self._bayes_ax.text(
+				i,
+				p + 0.02,
+				f"{p:.2f}",
+				ha="center",
+				va="bottom",
+				fontsize=8,
+			)
+
+		self._bayes_canvas.draw()
+
+	def _accion_proporcion(self) -> None:
+		"""
+		Comando 'proporción':
+		- usa la última carpeta clasificada,
+		- aplica Bayes sobre los clusters,
+		- actualiza el gráfico de Bayes.
+		"""
+		# Asegurarse de tener un DF cargado
+		df = self._controller.get_last_img_df()
+		if df is None:
+			if not hasattr(self, "_last_folder_path") or self._last_folder_path is None:
+				QtWidgets.QMessageBox.warning(
+					self,
+					"Bayes",
+					"No hay datos de imágenes cargados para calcular proporciones."
+				)
+				return
+			# Si hay carpeta pero no DF, lo regeneramos
+			try:
+				df = self._controller.clasificar_carpeta_img_df(self._last_folder_path)
+			except Exception as exc:
+				QtWidgets.QMessageBox.critical(
+					self,
+					"Bayes",
+					f"No se pudo clasificar la carpeta para Bayes:\n{exc}"
+				)
+				return
+
+		# Necesitás pi, P y etiquetas de hipótesis definidos en AppController
+		try:
+			pi = self._controller.bayes_pi          # np.ndarray (K,)
+			P = self._controller.bayes_P            # np.ndarray (K, C)
+			labels_hip = self._controller.bayes_labels  # list[str] len K
+		except AttributeError:
+			QtWidgets.QMessageBox.critical(
+				self,
+				"Bayes",
+				"Faltan parámetros bayes_pi, bayes_P o bayes_labels en AppController."
+			)
+			return
+
+		try:
+			post, decision = self._controller.bayes_desde_df_clusters(
+				df,
+				pi,
+				P,
+				labels_hip,
+				use_logs=True,
+				strict_zeros=True,
+			)
+		except Exception as exc:
+			QtWidgets.QMessageBox.critical(
+				self,
+				"Bayes",
+				f"Error al calcular el posterior de Bayes:\n{exc}"
+			)
+			return
+
+		# Mostrar decisión en algún label si querés
+		if hasattr(self, "BayesDecisionLabel"):
+			self.BayesDecisionLabel.setText(f"Hipótesis más probable: {decision}")
+
+		# Actualizar gráfico de barras
+		self._update_bayes_plot(post, labels_hip)
+
+	# =========================================================
+	# 8) Lógica de gráficos KMeans
+	# =========================================================
+
+	def _accion_contar(self) -> None:
+		"""
+		Comando 'contar':
+		- clasifica la carpeta actual de imágenes (si no se hizo ya),
+		- muestra la tabla en consola o en un widget (según tengas),
+		- actualiza el gráfico 3D de KMeans.
+		"""
+		if not hasattr(self, "_last_folder_path") or self._last_folder_path is None:
+			QtWidgets.QMessageBox.warning(
+				self,
+				"Sin carpeta",
+				"No hay ninguna carpeta analizada. Usa 'Analizar carpeta' antes de pedir 'contar'."
+			)
+			return
+
+		carpeta = self._last_folder_path
+
+		# 1) Obtener DataFrame de clasificaciones
+		try:
+			df = self._controller.clasificar_carpeta_img_df(carpeta)
+		except Exception as exc:
+			QtWidgets.QMessageBox.critical(
+				self,
+				"Error en KMeans",
+				f"No se pudo clasificar la carpeta:\n{exc}"
+			)
+			return
+
+		# Opcional: mostrar la tabla en una QTableView SI LA TENÉS
+		if hasattr(self, "DataFrame"):  # si creaste una QTableView en el .ui
+			model = PandasTableModel(df)  # tendrías que definir este model
+			self.DataFrame.setModel(model)
+		else:
+			# Mínimo: tirar un resumen a consola para debug
+			print("KMeans DF:\n", df.head())
+
+		# 2) Actualizar gráfico 3D de features de KMeans
+		self._update_kmeans_plot(carpeta)
+
+	def _update_kmeans_plot(self, carpeta: Path) -> None:
+		"""
+		Usa el backend para obtener las features 3D de KMeans y dibuja
+		el scatter + centroides en el canvas de KMeans.
+		"""
+		# Si por alguna razón no hay canvas/axes, no hacemos nada
+		if self._kmeans_canvas is None or self._kmeans_ax is None:
+			return
+
+		try:
+			# IMPORTANTE: acá usamos el método que devuelve datos,
+			# NO el que devuelve una Figure.
+			data = self._controller.IOrch.extraer_features_3d_para_directorio(
+				carpeta,
+				recursive=True,
+			)
+
+			X = np.asarray(data["X"], dtype=float)            # (N, 3)
+			clusters = np.asarray(data["clusters"], int)      # (N,)
+			centroids = np.asarray(data["centroids"], float)  # (K, 3)
+
+		except Exception as exc:
+			QtWidgets.QMessageBox.critical(
+				self,
+				"Error en gráfico KMeans",
+				f"No se pudieron obtener las features para graficar:\n{exc}"
+			)
+			return
+
+		# Limpiamos el eje antes de redibujar
+		self._kmeans_ax.clear()
+
+		# Puntos: cada imagen, coloreada por cluster
+		sc = self._kmeans_ax.scatter(
+			X[:, 0],
+			X[:, 1],
+			X[:, 2],
+			c=clusters,
+			s=30,
+			alpha=0.8,
+			cmap="viridis",
+		)
+
+		# Centroides: marcadores 'X' rojos, más finos
+		self._kmeans_ax.scatter(
+			centroids[:, 0],
+			centroids[:, 1],
+			centroids[:, 2],
+			marker="X",
+			s=60,
+			c="red",
+			edgecolor="black",
+			linewidth=1.0,
+		)
+
+		self._kmeans_ax.set_title("Parametrización de características: (r hull, variación radial, huecos)")
+		self._kmeans_ax.set_xlabel("r hull")
+		self._kmeans_ax.set_ylabel("variación radial")
+		self._kmeans_ax.set_zlabel("huecos")
+
+		# Tus features están normalizadas en [0, 1], así que fijamos límites:
+		self._kmeans_ax.set_xlim(0.0, 1.0)
+		self._kmeans_ax.set_ylim(0.0, 1.0)
+		self._kmeans_ax.set_zlim(0.0, 1.0)
+
+		# Si querés barra de color en el futuro, acá podrías crearla,
+		# pero en Qt es más cómodo dejar solo el scatter.
+
+		# Forzar el redibujado en el canvas
+		self._kmeans_canvas.draw()
+
 
 
 __all__ = ["MainWindow"]

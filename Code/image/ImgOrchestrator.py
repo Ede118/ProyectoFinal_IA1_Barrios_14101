@@ -198,7 +198,7 @@ class ImgOrchestrator:
 		}
 
 	# --- prediction --------------------------------------------------------------
-	def guardar_modelo(self, path: ImagePath) -> "ImgOrchestrator":
+	def guardar_modelo(self, path: ImagePath = DEFAULT_MODEL_PATH) -> "ImgOrchestrator":
 		if self.model._centers is None:
 			raise RuntimeError("No hay centroides para guardar; entrená el modelo primero.")
 		npz_path = Path(path)
@@ -209,41 +209,53 @@ class ImgOrchestrator:
 			else:
 				npz_path = MODELS_DIR / npz_path
 		npz_path.parent.mkdir(parents=True, exist_ok=True)
-		np.savez(npz_path, C=self.model._centers.astype(np.float32, copy=False))
+
+		# Mapping cluster -> etiqueta humana (o fallback)
+		keys = np.array(list(self.cluster_to_label.keys()), dtype=np.int64)
+		labels = np.array(
+			[str(self.cluster_to_label[k]) for k in keys],
+			dtype="<U64",  # strings sin pickle
+		)
+
+		np.savez(
+			npz_path,
+			C=self.model._centers.astype(np.float32, copy=False),
+			cluster_keys=keys,
+			cluster_labels=labels,
+		)
 		return self
 
-	def cargar_modelo(
-		self,
-		path: ImagePath = DEFAULT_MODEL_PATH
-	) -> "ImgOrchestrator":
-		"""
-		### Carga de centroides
-		Restaura el modelo a partir de un archivo `.npz` con la clave `C`.
-		- Reemplaza KMeans y reinicia metadatos asociados
-		- Mapea cada cluster a `cluster_{k}` por defecto
-		"""
+	def cargar_modelo(self, path: ImagePath = DEFAULT_MODEL_PATH) -> "ImgOrchestrator":
 		npz_path = Path(path)
 		if not npz_path.is_absolute():
-			# Soporta pasar "kmeans.npz" o "Database/models/kmeans.npz" sin duplicar
 			if npz_path.parts[:2] == ("Database", "models"):
 				npz_path = (PROJECT_ROOT / npz_path).resolve()
 			else:
 				npz_path = MODELS_DIR / npz_path
 		if not npz_path.is_file():
 			raise FileNotFoundError(f"No se encontró el archivo de centroides: {npz_path}")
+
 		with np.load(npz_path, allow_pickle=False) as data:
 			if "C" not in data:
 				raise KeyError("El archivo no contiene la clave 'C'.")
 			centroids = data["C"].astype(np.float64, copy=False)
+			keys = data.get("cluster_keys")
+			labels = data.get("cluster_labels")
 
 		self.model = KMeansModel(n_clusters=int(centroids.shape[0]), random_state=self.model.random_state)
 		self.model._centers = centroids
 		self.model._inertia = None
-		self.cluster_to_label = {i: f"cluster_{i}" for i in range(self.model.n_clusters)}
+
+		if keys is not None and labels is not None:
+			keys = np.asarray(keys, dtype=np.int64)
+			labels = [str(x) for x in labels.tolist()]
+			self.cluster_to_label = {int(k): labels[i] for i, k in enumerate(keys)}
+		else:
+			self.cluster_to_label = {i: f"cluster_{i}" for i in range(self.model.n_clusters)}
+
 		self.class_names = [self.cluster_to_label[i] for i in range(self.model.n_clusters)]
 		self.oni_tau_por_cluster = None
 		self._last_fit_features = None
-
 		return self
 
 	def predecir(
@@ -319,6 +331,93 @@ class ImgOrchestrator:
 			return resultado, df
 		return resultado
 
+	def extraer_features_3d_para_directorio(
+		self,
+		input_dir: ImagePath,
+		*,
+		recursive: bool = True,
+		exts: Iterable[str] = VALID_EXTS,
+	) -> dict[str, object]:
+		"""
+		Extrae las features (r_hull, radial_var, huecos) de todas las imágenes de
+		`input_dir`, las pasa por KMeans y devuelve toda la info necesaria para
+		graficar en 3D.
+
+		Devuelve un dict con:
+		  - "X"         : np.ndarray shape (N, 3) con las features
+		  - "paths"     : list[Path] con rutas absolutas
+		  - "clusters"  : np.ndarray shape (N,) con índices de cluster
+		  - "labels"    : list[str] nombres legibles (según cluster_to_label)
+		  - "centroids" : np.ndarray shape (K, 3) con centroides del modelo
+		"""
+		if self.model._centers is None:
+			raise RuntimeError(
+				"El modelo KMeans no está entrenado/cargado. "
+				"Llamá a cargar_modelo(...) o entrenar_desde_directorio(...)."
+			)
+
+		base = Path(input_dir)
+		if not base.is_absolute():
+			candidate = (PROJECT_ROOT / base).resolve()
+			if candidate.exists():
+				base = candidate
+		if not base.exists():
+			raise FileNotFoundError(f"No existe el directorio: {base}")
+
+		valid_exts = {e.lower() for e in exts}
+
+		if base.is_file():
+			if base.suffix.lower() not in valid_exts:
+				raise RuntimeError(f"Extensión no soportada para: {base}")
+			paths: list[Path] = [base]
+		else:
+			it: Iterator[Path] = base.rglob("*") if recursive else base.glob("*")
+			paths = sorted(p for p in it if p.is_file() and p.suffix.lower() in valid_exts)
+
+		if not paths:
+			raise RuntimeError(f"No encontré imágenes en: {base}")
+
+		# Usamos el pipeline interno para construir el dataset de features
+		X, _ = self._prepare_dataset(paths)  # X: (N, F)
+
+		if X.shape[1] < 3:
+			raise RuntimeError(
+				f"Se esperaban al menos 3 features por imagen, pero se obtuvieron {X.shape[1]}"
+			)
+
+		# Nos quedamos con las primeras 3 (r_hull, radial_var, huecos)
+		X3 = X[:, :3].astype(np.float64, copy=False)
+
+		# Asignar clusters con el modelo actual
+		clusters = self.model.predict(X3)
+		clusters = np.asarray(clusters, dtype=int)
+
+		# Labels legibles por cluster
+		labels_legibles: list[str] = []
+		for idx in clusters:
+			if self.cluster_to_label and int(idx) in self.cluster_to_label:
+				labels_legibles.append(self.cluster_to_label[int(idx)])
+			else:
+				labels_legibles.append(f"cluster_{int(idx)}")
+
+		# Centroides en el mismo espacio de features (3D)
+		centroids_full = np.asarray(self.model._centers, dtype=np.float64, copy=False)
+		if centroids_full.shape[1] < 3:
+			raise RuntimeError(
+				f"Los centroides tienen {centroids_full.shape[1]} dims y no 3; "
+				"revisá la configuración del modelo."
+			)
+		centroids3 = centroids_full[:, :3]
+
+		return {
+			"X": X3,
+			"paths": paths,
+			"clusters": clusters,
+			"labels": labels_legibles,
+			"centroids": centroids3,
+		}
+
+
 	def _cargar(
 			self,
 			entrada: Union[ImagePath, ColorImageU8]
@@ -372,7 +471,7 @@ class ImgOrchestrator:
 		labels: list[str] = []
 		
 		for path in paths:
-			vec = self._preparar_vector(path)
+			vec, _, _ = self._procesar_para_vector(path)
 			features.append(vec.reshape(-1))
 			label = Path(path).parent.name.strip()
 			labels.append(label if label else f"cluster_{len(labels)}")
