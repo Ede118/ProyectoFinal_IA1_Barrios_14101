@@ -199,6 +199,7 @@ class ImgOrchestrator:
 
 	# --- prediction --------------------------------------------------------------
 	def guardar_modelo(self, path: ImagePath = DEFAULT_MODEL_PATH) -> "ImgOrchestrator":
+		"""Persist K-Means centroids plus cluster→label mapping into an npz file."""
 		if self.model._centers is None:
 			raise RuntimeError("No hay centroides para guardar; entrená el modelo primero.")
 		npz_path = Path(path)
@@ -226,6 +227,7 @@ class ImgOrchestrator:
 		return self
 
 	def cargar_modelo(self, path: ImagePath = DEFAULT_MODEL_PATH) -> "ImgOrchestrator":
+		"""Carga centroides previamente guardados y reconstruye el mapping de etiquetas."""
 		npz_path = Path(path)
 		if not npz_path.is_absolute():
 			if npz_path.parts[:2] == ("Database", "models"):

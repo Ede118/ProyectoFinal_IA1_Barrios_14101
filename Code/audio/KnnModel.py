@@ -8,6 +8,7 @@ from Code.AliasesUsed import VecF, MatF, F32
 
 @dataclass(frozen=True, slots=True)
 class KnnConfig:
+  """Configuración de k-NN: vecinos, métrica, pesos y umbrales de descarte."""
   k_vecinos: int = 5
   tipo_distancia: Literal["cosine", "euclidean"] = "cosine"
   weighted: bool = True
@@ -18,6 +19,7 @@ class KnnConfig:
 
 @dataclass(slots=True)
 class KnnModel:
+	"""K-NN mínimo sobre embeddings ya estandarizados, con métrica coseno o euclídea."""
 	config: KnnConfig = field(default_factory=KnnConfig)
 
 	# estado tras "fit"

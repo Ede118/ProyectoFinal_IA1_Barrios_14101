@@ -11,6 +11,7 @@ try:
 	from scipy.special import logsumexp as _logsumexp  # estable
 except Exception:
 	def _logsumexp(s: VecF) -> float:
+		"""Versión de respaldo de logsumexp que evita overflow restando el máximo."""
 		smax = float(np.max(s))
 		return smax + float(np.log(np.sum(np.exp(s - smax))))
 
@@ -28,10 +29,11 @@ class BayesAgent:
 	# --------------------------------------------------------------------------------------------- #
 
 	def __post_init__(self) -> None:
-			if self.cantidad_objetos is not None and not (isinstance(self.cantidad_objetos, int) and self.cantidad_objetos > 0):
-				raise ValueError(f"K debe ser int>0, vino {self.cantidad_objetos!r}")
-			if self.cantidad_clases is not None and not (isinstance(self.cantidad_clases, int) and self.cantidad_clases > 0):
-				raise ValueError(f"C debe ser int>0, vino {self.cantidad_clases!r}")
+		"""Valida que K y C, si se pasan, sean enteros positivos."""
+		if self.cantidad_objetos is not None and not (isinstance(self.cantidad_objetos, int) and self.cantidad_objetos > 0):
+			raise ValueError(f"K debe ser int>0, vino {self.cantidad_objetos!r}")
+		if self.cantidad_clases is not None and not (isinstance(self.cantidad_clases, int) and self.cantidad_clases > 0):
+			raise ValueError(f"C debe ser int>0, vino {self.cantidad_clases!r}")
 			
 	# --------------------------------------------------------------------------------------------- #
 
@@ -60,6 +62,7 @@ class BayesAgent:
 			self,
 			s: VecF
 		) -> VecF:
+		"""Convierte puntajes logarítmicos en probabilidades normalizadas."""
 		log_norm = _logsumexp(s)
 		return np.exp(s - log_norm).astype(np.float64, copy=False)
 

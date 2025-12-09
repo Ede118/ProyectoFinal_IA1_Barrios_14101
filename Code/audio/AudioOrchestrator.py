@@ -310,11 +310,13 @@ class AudioOrchestrator:
 		self,
 		entrada: AudioPath,
 	) -> tuple[np.ndarray, int]:
+		"""Carga o procesa un path de audio y devuelve señal mono normalizada y sample rate."""
 		if isinstance(entrada, (str, Path)):
 			return self.AProc.procesar(entrada)
 		raise TypeError("Entrada inválida. Usa un path a archivo de audio.")
 
 	def _ensure_listo(self) -> None:
+		"""Confirma que stats, PCA y KNN estén disponibles antes de inferir o guardar."""
 		if (
 			self.stats.mu is None
 			or self.stats.sigma is None

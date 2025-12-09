@@ -6,6 +6,7 @@ import numpy as np
 
 @dataclass(slots=True)
 class hyper_params:
+	"""Umbrales heurísticos para normalizar variaciones geométricas."""
 	radial_var_t_low: float = 0.05
 	radial_var_t_high: float = 0.0
 	r_hull_t: float = 0.3
@@ -19,6 +20,7 @@ class ImgFeat:
 	use_meta: bool = False
 
 	def __post_init__(self) -> None:
+		"""Normaliza `mode` y valida que sea uno de los modos soportados (3D o 6D)."""
 		self.mode = self.mode.upper()
 		if self.mode not in {"3D", "6D"}:
 			raise ValueError(...)
@@ -337,4 +339,3 @@ class ImgFeat:
 		if values.size == 0:
 			return 0.0
 		return float(np.median(values))
-

@@ -45,6 +45,7 @@ class Standardizer:
 
 	# ---- chequeo interno ----
 	def _check(self) -> None:
+		"""Verifica que `calculate_statistics` haya inicializado `mu` y `sigma`."""
 		if self.mu is None or self.sigma is None:
 			raise RuntimeError("Standardizer no está ajustado. Corre fit(X) primero.")
 

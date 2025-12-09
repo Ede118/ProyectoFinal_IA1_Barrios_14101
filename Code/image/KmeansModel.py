@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class KMeansModel:
+	"""Implementación liviana de K-Means usando solo NumPy."""
 
 	n_clusters: int = 2
 	max_iter: int = 300
@@ -19,6 +20,7 @@ class KMeansModel:
 	_inertia: float | None = None
 
 	def __post_init__(self) -> None:
+		"""Valida hiperparámetros básicos al construir la instancia."""
 		if self.n_clusters <= 0:
 			raise ValueError(f"Cantidad de clusters debe ser mayor a cero: {self.n_cluster}")
 		if self.max_iter <= 0:
@@ -29,6 +31,12 @@ class KMeansModel:
 		X: np.ndarray, 
 		init_centers: np.ndarray | None = None
 		) -> "KMeansModel":
+		"""
+		Entrena K-Means sobre una matriz de features (N, F).
+
+		Si se proveen centroides iniciales, los usa; si no, los toma al azar.
+		Actualiza `self._centers` y `self._inertia` y devuelve `self` para encadenar.
+		"""
 		X = self._check_X(X)
 		F = X.shape[1]
 		centers0 = init_centers if init_centers is not None else self.init_centers
@@ -53,6 +61,7 @@ class KMeansModel:
 		return self
 
 	def predict(self, X: np.ndarray) -> np.ndarray:
+		"""Asigna cada fila de `X` al centro más cercano y devuelve etiquetas (N,)."""
 		if self._centers is None:
 			raise RuntimeError("Debes llamar a fit(X) antes de predict(X).")
 		X = self._check_X(X, enforce_min=False)
@@ -90,6 +99,7 @@ class KMeansModel:
 
 	# ------------------------------------------------------------------ #
 	def _check_X(self, X: np.ndarray, *, enforce_min: bool = True) -> np.ndarray:
+		"""Normaliza dtype/shape y opcionalmente exige N >= n_clusters."""
 		X = np.asarray(X, dtype=np.float64)
 		if X.ndim != 2:
 			raise ValueError("X debe ser un array 2D de forma (N, F).")
@@ -99,6 +109,7 @@ class KMeansModel:
 		return X
 
 	def _init_centers(self, X: np.ndarray) -> np.ndarray:
+		"""Selecciona `n_clusters` filas aleatorias de `X` como centroides iniciales."""
 		N, F = X.shape
 		rng = np.random.default_rng(self.random_state)
 		idx = rng.choice(N, size=self.n_clusters, replace=False)
@@ -119,6 +130,7 @@ class KMeansModel:
 		return labels
 
 	def _update_centers(self, X: np.ndarray, labels: np.ndarray, old_centers: np.ndarray) -> np.ndarray:
+		"""Recalcula centroides como la media de los puntos asignados (re‑inicializa vacíos)."""
 		N, F = X.shape
 		K = self.n_clusters
 		centers = np.zeros((K, F), dtype=np.float64)

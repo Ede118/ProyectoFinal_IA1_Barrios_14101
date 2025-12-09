@@ -15,6 +15,7 @@ import librosa
 
 @dataclass(frozen=True)
 class AudioFeatConfig:
+	"""Parámetros para extracción de MFCC + derivados y pooling estadístico."""
 	sr_target: float = 16e3
 	win_ms: float = 25.
 	hop_ms: float = 10.
@@ -116,6 +117,7 @@ class AudioFeat:
 	# -------------------------------------------------------------------------------------------------  #
 	
 	def _nombre_canales(self) -> list[str]:
+		"""Devuelve etiquetas base (MFCC, Δ, RMS, ZCR) en el orden usado para apilar features."""
 		nombres: list[str] = []
 		n = int(self.config.N_MFCC)
 		for i in range(n):
@@ -139,6 +141,7 @@ class AudioFeat:
 		matInfo: MatF,
 		stats: tuple[str, ...]
 	) -> MatF:
+		"""Aplica pooling estadístico columna a columna sobre la matriz `(C, T)`."""
 		acc = []
 		if "mean" in stats: acc.append(np.mean(matInfo, axis=1))
 		if "std"  in stats: acc.append(np.std(matInfo, axis=1))
@@ -154,6 +157,7 @@ class AudioFeat:
 	def _Hz2mel(
 		frecuencia_Hz: np.ndarray
 	) -> np.ndarray:
+		"""Transforma frecuencias en Hz al eje mel."""
 		return 2595.0 * np.log10(1.0 + frecuencia_Hz / 700.0)
 
 	# -------------------------------------------------------------------------------------------------  #
@@ -162,6 +166,7 @@ class AudioFeat:
 	def _mel2Hz(
 		frecuencia_mel: np.ndarray
 		) -> np.ndarray:
+		"""Transforma frecuencias en mel a Hz."""
 		return 700.0 * (10.0 ** (frecuencia_mel / 2595.0) - 1.0)
 
 	# -------------------------------------------------------------------------------------------------  #
@@ -171,15 +176,13 @@ class AudioFeat:
 		x: MatF, 
 		n_out: MatF
 	) -> MatF:
-			"""
-			DCT-II por canal: entrada (n_mels, T) -> salida (n_out, T)
-			"""
-			n_mels, T = x.shape
-			# matriz DCT-II (sin normalización ortonormal porque es constante a escala)
-			k = np.arange(n_out)[:, None]
-			n = np.arange(n_mels)[None, :]
-			dct = np.cos(np.pi / n_mels * (n + 0.5) * k).astype(np.float32)
-			return (dct @ x).astype(np.float32)
+		"""DCT-II por canal: entrada (n_mels, T) → salida (n_out, T)."""
+		n_mels, T = x.shape
+		# matriz DCT-II (sin normalización ortonormal porque es constante a escala)
+		k = np.arange(n_out)[:, None]
+		n = np.arange(n_mels)[None, :]
+		dct = np.cos(np.pi / n_mels * (n + 0.5) * k).astype(np.float32)
+		return (dct @ x).astype(np.float32)
 
 	# -------------------------------------------------------------------------------------------------  #
 
@@ -246,6 +249,7 @@ class AudioFeat:
 		win: float, 
 		hop: float
 	) -> np.ndarray:
+		"""Genera los índices de inicio de cada frame dado win/hop en muestras."""
 		last = N - win
 		if last < 0:
 				return np.array([], dtype=np.int64)
@@ -257,6 +261,7 @@ class AudioFeat:
 		win: float, 
 		hop: float
 	) -> np.ndarray:
+		"""Calcula energía RMS por frame en coherencia con los parámetros de framing."""
 		y = np.asarray(y, dtype=F32, order="C")
 		if y.size < win:
 			return np.empty((1, 0), dtype=F32)
@@ -274,6 +279,7 @@ class AudioFeat:
 		win: float, 
 		hop: float
 	) -> np.ndarray:
+		"""Calcula tasa de cruce por cero (ZCR) alineada con las mismas ventanas."""
 		y = np.asarray(y, dtype=F32, order="C")
 		if y.size < win:
 			return np.empty((1, 0), dtype=F32)

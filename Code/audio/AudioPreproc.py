@@ -22,6 +22,7 @@ from Code.AliasesUsed import VecF, F32, AudioSignal
 
 @dataclass(frozen=True)
 class AudioPreprocConfig:
+	"""Flags de preprocesamiento: resampleo, VAD, normalización y padding."""
 	# Normalización de sampling y duración
 	target_sr: int = 16000								# f_ss [Hz]
 	T_sec: float = 1.2									# T_fija [s]
@@ -56,6 +57,7 @@ class AudioPreprocConfig:
 
 @dataclass(slots=True)
 class AudioPreproc:
+	"""Encapsula el pipeline de limpieza/normalización previo a la extracción de features."""
 	config: AudioPreprocConfig = field(default_factory=AudioPreprocConfig)
 
 	# -------------------------------------------------------------------------------------------------  #
