@@ -34,12 +34,13 @@ class AppController:
 	def __post_init__(self) -> None:
 		# --- Parámetros por defecto de Bayes ---
 		# Matriz P[k,i] = P(categoría i | hipótesis k)
-		# Este es exactamente el ejemplo de las cajas.
+		# Orden de columnas alineado con los índices de cluster del modelo de imagen:
+		# 0 -> Arandela, 1 -> Clavo, 2 -> Tornillo, 3 -> Tuerca
 		self.bayes_P = np.array([
 			[250, 250, 250, 250],   # caja a)
-			[150, 300, 300, 250],   # caja b)
+			[300, 300, 150, 250],   # caja b)  (0.30 A, 0.30 C, 0.15 T, 0.25 U)
 			[250, 350, 250, 150],   # caja c)
-			[500, 500,   0,   0],   # caja d)
+			[  0, 500, 500,   0],   # caja d)  (0.00 A, 0.50 C, 0.50 T, 0.00 U)
 		], dtype=float) / 1000.0   # cada fila suma 1
 
 		# Prior uniforme sobre las 4 hipótesis
@@ -229,6 +230,7 @@ class AppController:
 		P: np.ndarray,
 		labels_hipotesis: list[str],
 		*,
+		column: str | None = None,
 		use_logs: bool = True,
 		strict_zeros: bool = True,
 	) -> tuple[np.ndarray, str | list[str]]:
@@ -252,7 +254,7 @@ class AppController:
 			raise ValueError("Cantidad de labels de hipótesis no coincide con K")
 
 		# 1) Conteos por cluster
-		n = self._contar_por_cluster(df, column="cluster", num_categories=C)
+		n = self._contar_por_cluster(df, column=column, num_categories=C)
 
 		# 2) Posterior con BayesAgent
 		post = self.Bayes.posterior(pi, P, n, use_logs=use_logs, strict_zeros=strict_zeros)
@@ -263,7 +265,7 @@ class AppController:
 		OUTPUT_DIR = PROJECT_ROOT / "Database" / "output"
 		OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-		np.save(OUTPUT_DIR / "bayes_posterior.npy", posterior)
+		np.save(OUTPUT_DIR / "bayes_posterior.npy", post)
 		df.to_csv(OUTPUT_DIR / "ultima_carpeta_clasificada.csv", index=False)
 
 		return post, decision
@@ -328,6 +330,10 @@ class AppController:
 		# 1) conteos por cluster
 		n = self._contar_por_cluster(df, column=column, num_categories=C)
 
+		print("P shape/order:", P.shape, "rows sum:", P.sum(axis=1))
+		print("n vector:", n)
+
+
 		# 2) posterior con BayesAgent
 		post = self.Bayes.posterior(pi, P, n, use_logs=use_logs, strict_zeros=strict_zeros)
 
@@ -351,4 +357,3 @@ class AppController:
 		"""
 		resultados = self.AOrch.predecir_comando(ruta_audio)
 		return resultados
-

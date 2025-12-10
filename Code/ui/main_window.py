@@ -576,6 +576,10 @@ class MainWindow(QtWidgets.QMainWindow):
 		labels_hip = self._controller.bayes_labels
 
 		try:
+			print("DF cols:", df.columns.tolist())
+			print("clusters counts:", df["Número de Cluster"].value_counts().sort_index())
+			print("cluster->label:", self._controller.IOrch.cluster_to_label)
+
 			post, decision = self._controller.bayes_desde_df_clusters(
 				df,
 				pi,
